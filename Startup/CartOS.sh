@@ -1,16 +1,146 @@
 #!/bin/sh
-# Optional OnionOS boot hook. It queues CartOS only when OnionOS has no
-# pending command, preserving OnionOS auto-resume of the last running game.
-SDCARD=/mnt/SDCARD
-APP="$SDCARD/App/CartOS/launch.sh"
-SYSDIR="$SDCARD/.tmp_update"
-COMMAND="$SYSDIR/cmd_to_run.sh"
-TEMP="$COMMAND.cartos.tmp"
+# Optional OnionOS startup integration. It queues CartOS at boot when no game
+# is already queued and adds a marked, reversible GameSwitcher hook.
 
-if [ -e "$SYSDIR/config/.noCartOSAutostart" ] || [ -e "$COMMAND" ] || [ ! -x "$APP" ]; then
+SDCARD=/mnt/SDCARD
+SYSDIR="$SDCARD/.tmp_update"
+RUNTIME="$SYSDIR/runtime.sh"
+APP="$SDCARD/App/CartOS/launch.sh"
+BACKUP_DIR="$SYSDIR/CartOS-return-backup"
+BACKUP="$BACKUP_DIR/runtime.sh.before"
+TEMP="$SYSDIR/.runtime.sh.cartos.tmp"
+COMMAND_TEMP="$SYSDIR/.cmd_to_run.sh.cartos.tmp"
+LOGDIR="$SYSDIR/logs"
+LOG="$LOGDIR/cartos-runtime-hook.log"
+
+log() {
+    mkdir -p "$LOGDIR" 2>/dev/null || return 0
+    printf '%s CartOS startup: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
+}
+
+queue_cartos() {
+    if [ -e "$SYSDIR/cmd_to_run.sh" ]; then
+        log "left existing OnionOS launch queued"
+        return 0
+    fi
+    printf '%s\n' 'LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so sh "/mnt/SDCARD/App/CartOS/launch.sh"' > "$COMMAND_TEMP" || return 1
+    chmod 755 "$COMMAND_TEMP" || { rm -f "$COMMAND_TEMP"; return 1; }
+    mv -f "$COMMAND_TEMP" "$SYSDIR/cmd_to_run.sh" || { rm -f "$COMMAND_TEMP"; return 1; }
+    sync
+    log "queued CartOS for boot"
+}
+
+# OnionOS calls the same startup script after GameSwitcher exits.
+if [ "${1-}" = "return" ]; then
+    if [ ! -f "$APP" ]; then
+        log "CartOS launch script missing; return skipped"
+        exit 0
+    fi
+    queue_cartos || log "could not queue CartOS after GameSwitcher"
     exit 0
 fi
 
-printf '%s\n' 'LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so "/mnt/SDCARD/App/CartOS/launch.sh"' > "$TEMP"
-chmod 755 "$TEMP"
-mv -f "$TEMP" "$COMMAND"
+if [ ! -f "$RUNTIME" ] || [ ! -f "$APP" ]; then
+    log "OnionOS runtime or CartOS app missing; no changes made"
+    exit 0
+fi
+
+# Migrate the earlier return-only hook in place when its saved pre-hook runtime
+# exists. Keep that original backup so the restore script can still undo it.
+if awk '
+    /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+    in_function && /CartOS GameSwitcher return hook/ { old_hook=1 }
+    in_function && /startup\/GameSwitcher-Return\.sh.*return/ { old_callback=1 }
+    in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+    END { exit !(old_hook && old_callback) }
+' "$RUNTIME"; then
+    if [ ! -f "$BACKUP" ]; then
+        log "older return hook found without its runtime backup; no changes made"
+        exit 0
+    fi
+    if ! awk '
+        /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+        in_function && /CartOS GameSwitcher return hook/ {
+            indent=$0; sub(/[^[:space:]].*/, "", indent)
+            print indent "# CartOS startup and GameSwitcher return hook"
+            changed=1
+            next
+        }
+        in_function && /startup\/GameSwitcher-Return\.sh.*return/ {
+            indent=$0; sub(/[^[:space:]].*/, "", indent)
+            print indent "sh \"$sysdir/startup/CartOS.sh\" return"
+            changed=1
+            next
+        }
+        { print }
+        in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+        END { if (!changed) exit 3 }
+    ' "$RUNTIME" > "$TEMP"; then
+        rm -f "$TEMP"
+        log "could not update older return hook; runtime left unchanged"
+        exit 0
+    fi
+    chmod 755 "$TEMP" && mv -f "$TEMP" "$RUNTIME" || {
+        rm -f "$TEMP"
+        log "could not migrate older return hook; runtime left unchanged"
+        exit 0
+    }
+    sync
+    log "updated earlier return hook to use CartOS startup script"
+fi
+
+# Check whether our exact hook is already installed.
+if awk '
+    /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+    in_function && /CartOS startup and GameSwitcher return hook/ { installed=1 }
+    in_function && /startup\/CartOS\.sh.*return/ { callback=1 }
+    in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+    END { exit !(installed && callback) }
+' "$RUNTIME"; then
+    log "runtime return hook already installed"
+else
+    # Prepare a candidate first. Unknown OnionOS runtime layouts are left alone.
+    if ! awk '
+        /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+        in_function && /^[[:space:]]*if[[:space:]]+\[[[:space:]]+-f[[:space:]]+\/tmp\/run_advmenu[[:space:]]*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/ {
+            indent=$0
+            sub(/if.*/, "", indent)
+            print indent "# CartOS startup and GameSwitcher return hook"
+            print indent "if [ -f /tmp/cartos_return_to_launcher ]; then"
+            print indent "    rm -f /tmp/cartos_return_to_launcher"
+            print indent "    sh \"$sysdir/startup/CartOS.sh\" return"
+            print indent "elif [ -f /tmp/run_advmenu ]; then"
+            found=1
+            next
+        }
+        { print }
+        in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+        END { if (!found) exit 3 }
+    ' "$RUNTIME" > "$TEMP"; then
+        rm -f "$TEMP"
+        log "expected runtime hook point not found; no changes made"
+        exit 0
+    fi
+
+    chmod 755 "$TEMP" || {
+        rm -f "$TEMP"
+        log "could not prepare runtime; original left unchanged"
+        exit 0
+    }
+    if ! mv -f "$TEMP" "$RUNTIME"; then
+        rm -f "$TEMP"
+        log "could not install runtime hook; original left unchanged"
+        exit 0
+    fi
+    sync
+    log "installed marked GameSwitcher return hook"
+fi
+
+# The runtime's ordinary boot path launches this queued command after all
+# startup scripts finish. Leave a pending game/app command untouched.
+if [ ! -e "$SYSDIR/cmd_to_run.sh" ]; then
+    queue_cartos || log "could not queue CartOS for boot"
+else
+    log "left existing OnionOS launch queued"
+fi
+exit 0
