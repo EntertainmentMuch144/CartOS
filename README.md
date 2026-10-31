@@ -46,3 +46,6 @@ keyboard. See [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
 - `BUILD-INFO.txt` — version and matching Miyoo SDL2 backend revision.
 - `LICENSE` and `THIRD-PARTY-NOTICES.md` — project and third-party license
   information.
+
+
+This software was made with the use of ChatGPT Codex, it is all my idea and my feature choices, AI was just my coder.
