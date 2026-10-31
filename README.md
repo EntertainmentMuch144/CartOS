@@ -8,6 +8,7 @@ has been tested on the Miyoo Mini V4.
 - Finds configured game systems that contain ROMs and displays their cartridge
   artwork.
 - Browses Recent, Favourite, and custom game lists, with search and game details.
+- Searches with the on-screen keyboard, including spaces and punctuation.
 - Shows playtime when Activity Tracker is installed, plus the handheld's
   battery level.
 - Browses installed OnionOS apps and hands games and apps back to OnionOS to
@@ -31,8 +32,8 @@ needed for a normal app installation.
 
 ## Latest release
 
-CartOS 0.1.21 adds a short first-launch handoff delay for OnionOS Music Player.
-See [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
+CartOS 0.1.22 adds a space key and working punctuation to the on-screen search
+keyboard. See [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
 
 ## Repository contents
 

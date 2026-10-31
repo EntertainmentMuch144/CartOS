@@ -33,7 +33,7 @@ cmake -S "$ROOT" -B "$ROOT/build/miyoo" \
   -DCMAKE_PREFIX_PATH="$MIYOO_SDL2_ROOT" \
   -DCMAKE_INSTALL_PREFIX=/
 cmake --build "$ROOT/build/miyoo" --parallel
-cmake --install "$ROOT/build/miyoo" --prefix "$APP"
+DESTDIR="$APP" cmake --build "$ROOT/build/miyoo" --target install
 mkdir -p "$APP/res" "$APP/licenses"
 cp "$ROOT/assets/font_atlas.png" "$APP/res/font_atlas.png"
 cp "$ROOT/assets/onionos_logo.png" "$APP/res/onionos_logo.png"

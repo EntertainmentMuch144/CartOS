@@ -11,6 +11,7 @@ This folder contains the C++ and SDL2 source code, assets, and packaging resourc
 - `packaging/OnionOS/` — OnionOS app template, optional combined boot-start/GameSwitcher hook, and runtime restore script.
 - CartOS Settings can hide a system from the vertical browser list without deleting its ROMs or removing games from search and saved lists.
 - Background images named `BG.png` or `BG_<name>.png` can be selected in CartOS Settings; names in parentheses are shown without the filename prefix or parentheses.
+- The search keyboard includes a space key and working punctuation.
 
 For a normal installation, use the ready-to-copy `App/CartOS` folder and follow the installation guide at the repository root.
 

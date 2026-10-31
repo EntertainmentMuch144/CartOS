@@ -2,6 +2,11 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.22 — Search keyboard space and punctuation
+
+- Add a visible SPACE key to the on-screen search keyboard.
+- Make every displayed search key insert its character, including hyphen, apostrophe, and period.
+
 ## 0.1.21 — Music Player first-launch handoff
 
 - Add a one-second settle delay only before launching OnionOS Music Player (GMU), which switches from OnionOS audio to its own SDL 1.2 stack.

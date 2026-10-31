@@ -32,7 +32,18 @@ constexpr float kLaunchReverseDuration=0.32f;
 constexpr Uint64 kLaunchDoubleTapWindowMs=380;
 constexpr Uint64 kScrollInitialDelayMs=360;
 constexpr Uint64 kScrollRepeatIntervalMs=180;
+constexpr const char* kSearchKeyboardRows[]={
+    "ABCDEFGHIJ",
+    "KLMNOPQRST",
+    "UVWXYZ0123",
+    "456789 -'."
+};
 SDL_Color white{240,240,240,255}, muted{125,128,134,255};
+
+char searchKeyboardCharacter(int index){
+    const int clamped=std::max(0,std::min(39,index));
+    return kSearchKeyboardRows[clamped/10][clamped%10];
+}
 
 int wrapIndex(int index,int count){
     index%=count;
@@ -1917,10 +1928,7 @@ void Launcher::handle(const SDL_Event& e){
             else if(button==SDL_CONTROLLER_BUTTON_A){
                 if(searchResultsFocused_) launchSearchSelected();
                 else{
-                    static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};
-                    const int row=std::min(3,virtualKey_/10),column=virtualKey_%10;
-                    const char value=keys[row][static_cast<size_t>(column)];
-                    if(value!=' ') searchQuery_.push_back(value);
+                    searchQuery_.push_back(searchKeyboardCharacter(virtualKey_));
                     updateSearchResults();
                 }
             }else if(button==SDL_CONTROLLER_BUTTON_DPAD_LEFT){if(searchResultsFocused_)--searchResultSelection_;else virtualKey_=std::max(0,virtualKey_-1);}
@@ -1935,7 +1943,7 @@ void Launcher::handle(const SDL_Event& e){
             if(button==5){if(searchResultsFocused_)searchResultsFocused_=false;else if(!searchQuery_.empty()){searchQuery_.pop_back();updateSearchResults();}else{SDL_StopTextInput();overlay_=Overlay::None;}}
             else if(button==6)refreshAll();
             else if(button==7)searchResultsFocused_=!searchResultsFocused_;
-            else if(button==4){if(searchResultsFocused_)launchSearchSelected();else{static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};const char value=keys[std::min(3,virtualKey_/10)][static_cast<size_t>(virtualKey_%10)];if(value!=' ')searchQuery_.push_back(value);updateSearchResults();}}
+            else if(button==4){if(searchResultsFocused_)launchSearchSelected();else{searchQuery_.push_back(searchKeyboardCharacter(virtualKey_));updateSearchResults();}}
             else if(button==10)searchResultsFocused_=true;
             else if(button==8){SDL_StopTextInput();overlay_=Overlay::None;}
             return;
@@ -2608,16 +2616,16 @@ void Launcher::renderSearch(){
         draw::text(renderer_,(kDesignW-draw::textWidth(none,20))/2,245,none,20,muted);
     }
     if(!searchResultsFocused_){
-        static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};
         for(int row=0;row<4;++row){
             for(int col=0;col<10;++col){
                 const int index=row*10+col;
                 const SDL_Rect keyRect{111+col*55,398+row*28,47,23};
                 if(index==virtualKey_)fillRect(renderer_,keyRect,{39,64,90,255});
                 outlineRect(renderer_,keyRect,index==virtualKey_?SDL_Color{145,205,255,255}:SDL_Color{54,62,75,255});
-                const char value=keys[row][static_cast<size_t>(col)];
-                const std::string label=value==' '?"·":std::string(1,value);
-                draw::text(renderer_,keyRect.x+(keyRect.w-draw::textWidth(label,15))/2,keyRect.y+4,label,15,index==virtualKey_?SDL_Color{145,205,255,255}:white);
+                const char value=searchKeyboardCharacter(index);
+                const std::string label=value==' '?"SPACE":std::string(1,value);
+                const int labelSize=value==' '?12:15;
+                draw::text(renderer_,keyRect.x+(keyRect.w-draw::textWidth(label,labelSize))/2,keyRect.y+4,label,labelSize,index==virtualKey_?SDL_Color{145,205,255,255}:white);
             }
         }
         const std::string footer="A TYPE   B BACKSPACE   X REFRESH   START RESULTS";
