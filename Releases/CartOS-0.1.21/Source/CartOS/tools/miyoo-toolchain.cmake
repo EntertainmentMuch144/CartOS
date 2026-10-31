@@ -1,0 +1,38 @@
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+
+# The Union toolchain container exports CROSS_COMPILE after `make shell`.
+if(DEFINED ENV{CROSS_COMPILE})
+    set(_cross "$ENV{CROSS_COMPILE}")
+else()
+    set(_cross "arm-linux-gnueabihf-")
+endif()
+set(CMAKE_C_COMPILER "${_cross}gcc")
+set(CMAKE_CXX_COMPILER "${_cross}g++")
+
+if(DEFINED ENV{MIYOO_SYSROOT})
+    set(CMAKE_SYSROOT "$ENV{MIYOO_SYSROOT}")
+    set(CMAKE_FIND_ROOT_PATH "${CMAKE_SYSROOT}")
+else()
+    # The Union Docker image keeps its target sysroot beside the cross tools.
+    # Point CMake's package finders there as well as letting GCC use its
+    # built-in sysroot, so dependencies such as libpng and zlib are discoverable.
+    set(_cross_gcc "${_cross}gcc")
+    if(IS_ABSOLUTE "${_cross_gcc}")
+        set(_cross_gcc_path "${_cross_gcc}")
+    else()
+        find_program(_cross_gcc_path NAMES "${_cross_gcc}")
+    endif()
+    if(_cross_gcc_path)
+        get_filename_component(_cross_bin_dir "${_cross_gcc_path}" DIRECTORY)
+        get_filename_component(_default_sysroot "${_cross_bin_dir}/../arm-linux-gnueabihf/libc" REALPATH)
+        if(EXISTS "${_default_sysroot}/usr/include" AND EXISTS "${_default_sysroot}/usr/lib")
+            set(CMAKE_SYSROOT "${_default_sysroot}")
+            set(CMAKE_FIND_ROOT_PATH "${CMAKE_SYSROOT}")
+        endif()
+    endif()
+endif()
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)

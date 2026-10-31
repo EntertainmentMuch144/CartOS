@@ -1,0 +1,27 @@
+build/
+.DS_Store
+._*
+packaging/OnionOS/App/CartOS/bin/
+packaging/OnionOS/App/CartOS/lib/
+
+# Keep historical packages locally, but publish only the latest release.
+Releases/CartOS-0.1.14/
+Releases/CartOS-0.1.14.zip
+Releases/CartOS-0.1.15/
+Releases/CartOS-0.1.15.zip
+Releases/CartOS-0.1.16/
+Releases/CartOS-0.1.16.zip
+Releases/CartOS-0.1.17/
+Releases/CartOS-0.1.17.zip
+Releases/CartOS-0.1.18/
+Releases/CartOS-0.1.18.zip
+Releases/CartOS-0.1.19/
+Releases/CartOS-0.1.19.zip
+Releases/CartOS-0.1.20/
+Releases/CartOS-0.1.20.zip
+Source/CartOS/dist/CartOS-0.1.15.zip
+Source/CartOS/dist/CartOS-0.1.16.zip
+Source/CartOS/dist/CartOS-0.1.17.zip
+Source/CartOS/dist/CartOS-0.1.18.zip
+Source/CartOS/dist/CartOS-0.1.19.zip
+Source/CartOS/dist/CartOS-0.1.20.zip
