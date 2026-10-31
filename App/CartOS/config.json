@@ -1,6 +1,0 @@
-{
-  "label": "CartOS",
-  "icon": "res/icon/cartos.png",
-  "launch": "launch.sh",
-  "description": "Cartridge based game browser"
-}
