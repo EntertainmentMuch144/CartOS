@@ -1,4 +1,4 @@
-CartOS 0.1.22 — Installation Guide
+CartOS 0.1.23 — Installation Guide
 
 CartOS is a cartridge-style game browser for OnionOS handhelds. This release
 has been tested on the Miyoo Mini V4.

@@ -423,6 +423,11 @@ bool Launcher::init(){
     }
     discoverGames();
     reloadBackgroundChoices();
+    const char* skipStartupAnimation=std::getenv("CARTOS_SKIP_STARTUP_ANIMATION");
+    startupAnimation_=startupAnimationEnabled_ &&
+        !(skipStartupAnimation && std::string(skipStartupAnimation)=="1") &&
+        !categories_.empty() && !categories_.front().entries.empty();
+    startupAnimationElapsed_=0.0f;
     for(int i=0;i<SDL_NumJoysticks();++i){
         if(SDL_IsGameController(i)) controller_=SDL_GameControllerOpen(i);
         if(controller_) break;
@@ -906,6 +911,7 @@ void Launcher::loadSettings(){
         if(separator==std::string::npos) continue;
         const std::string key=line.substr(0,separator), value=line.substr(separator+1);
         if(key=="two_step_launch") twoStepLaunch_=(value=="1");
+        else if(key=="startup_animation") startupAnimationEnabled_=(value!="0");
         else if(key=="show_game_count") showGameCount_=(value!="0");
         else if(key=="show_battery_level") showBatteryLevel_=(value!="0");
         else if(key=="show_control_hints") showControlHints_=(value!="0");
@@ -942,6 +948,7 @@ void Launcher::saveSettings() const{
     std::ofstream file(temporary.c_str(),std::ios::out|std::ios::trunc);
     if(!file) return;
     file<<"two_step_launch="<<(twoStepLaunch_?1:0)<<"\n"
+        <<"startup_animation="<<(startupAnimationEnabled_?1:0)<<"\n"
         <<"show_game_count="<<(showGameCount_?1:0)<<"\n"
         <<"show_battery_level="<<(showBatteryLevel_?1:0)<<"\n"
         <<"show_control_hints="<<(showControlHints_?1:0)<<"\n"
@@ -1058,8 +1065,8 @@ void Launcher::changeSetting(int direction){
     bool systemVisibilityChanged=false;
     if(settingsSelection_==0){
         twoStepLaunch_=!twoStepLaunch_;
-    }else if(settingsSelection_>=12){
-        const int systemSetting=settingsSelection_-12;
+    }else if(settingsSelection_>=13){
+        const int systemSetting=settingsSelection_-13;
         const int systemIndex=systemSetting/2;
         if(systemIndex>=0 && systemIndex<systemCount){
             const std::string& id=systems_[static_cast<size_t>(systemIndex)].id;
@@ -1074,16 +1081,18 @@ void Launcher::changeSetting(int direction){
         switch(settingsSelection_){
             case 1: carouselSpacing_=wrapIndex(carouselSpacing_+direction,3); break;
             case 2: animationSpeed_=wrapIndex(animationSpeed_+direction,3); break;
-            case 3: titleSize_=wrapIndex(titleSize_+direction,3); break;
-            case 4: showGameCount_=!showGameCount_; break;
-            case 5: showBatteryLevel_=!showBatteryLevel_; break;
-            case 6: showControlHints_=!showControlHints_; break;
-            case 7: wrapGameBrowsing_=!wrapGameBrowsing_; break;
-            case 8: invertTextColour_=!invertTextColour_; break;
-            case 9: hideGameTitle_=!hideGameTitle_; break;
-            case 10: selectBackground(direction); break;
-            case 11:
+            case 3: startupAnimationEnabled_=!startupAnimationEnabled_; break;
+            case 4: titleSize_=wrapIndex(titleSize_+direction,3); break;
+            case 5: showGameCount_=!showGameCount_; break;
+            case 6: showBatteryLevel_=!showBatteryLevel_; break;
+            case 7: showControlHints_=!showControlHints_; break;
+            case 8: wrapGameBrowsing_=!wrapGameBrowsing_; break;
+            case 9: invertTextColour_=!invertTextColour_; break;
+            case 10: hideGameTitle_=!hideGameTitle_; break;
+            case 11: selectBackground(direction); break;
+            case 12:
                 twoStepLaunch_=true;
+                startupAnimationEnabled_=true;
                 for(auto& scale:cartridgeScaleBySystem_) scale.second=1;
                 for(const SystemInfo& system:systems_) cartridgeScaleBySystem_[system.id]=1;
                 for(auto& hidden:hiddenSystemById_) hidden.second=false;
@@ -1101,7 +1110,7 @@ void Launcher::changeSetting(int direction){
     }
     saveSettings();
     if(systemVisibilityChanged){
-        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-12)/2)].id);
+        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-13)/2)].id);
         statusMessage_=hidden?"System hidden":"System shown";
         statusUntil_=SDL_GetTicks64()+1800;
     }
@@ -1117,7 +1126,7 @@ void Launcher::moveSettingsSelection(int direction){
 }
 
 int Launcher::settingsRowCount() const{
-    return static_cast<int>(systems_.size())*2+12;
+    return static_cast<int>(systems_.size())*2+13;
 }
 
 void Launcher::openOnionGameSwitcher(){
@@ -2232,6 +2241,20 @@ void Launcher::render(float dt){
         int cy=254;
         float liftEase=0.0f;
         float dropEase=0.0f;
+        float startupSideEase=1.0f;
+        float startupCenterEase=1.0f;
+        if(startupAnimation_){
+            auto smooth=[](float value){
+                const float t=std::max(0.0f,std::min(1.0f,value));
+                return t*t*(3.0f-2.0f*t);
+            };
+            startupCenterEase=smooth(startupAnimationElapsed_/0.48f);
+            startupSideEase=smooth((startupAnimationElapsed_-0.48f)/0.40f);
+            if(offset!=0){
+                const float direction=offset<0?-1.0f:1.0f;
+                cx+=static_cast<int>(direction*460.0f*(1.0f-startupSideEase));
+            }
+        }
         if(launchAnimation_){
             const float animationTime=std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
             const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
@@ -2266,6 +2289,9 @@ void Launcher::render(float dt){
             const int liftedCenterY=254-static_cast<int>(30.0f*liftEase);
             const int fullyOffscreenCenterY=kDesignH+ch/2+30;
             cy=liftedCenterY+static_cast<int>((fullyOffscreenCenterY-liftedCenterY)*dropEase);
+        }else if(startupAnimation_ && offset==0){
+            const int startY=kDesignH+ch/2+8;
+            cy=startY+static_cast<int>((254-startY)*startupCenterEase);
         }
         const SDL_Rect box{cx-cw/2,cy-ch/2,cw,ch};
         if(entry.kind==EntryKind::App) draw::appIcon(renderer_,box,entry.artwork,entry.variant,entry.onionMainUi);
@@ -2301,6 +2327,11 @@ void Launcher::render(float dt){
         const float bottomEase=launchReversing_?1.0f-reverseEase:bottomProgress*bottomProgress*(3.0f-2.0f*bottomProgress);
         topTextOffset=-190*static_cast<int>(topEase*1000.0f)/1000;
         bottomTextOffset=190*static_cast<int>(bottomEase*1000.0f)/1000;
+    }else if(startupAnimation_){
+        const float textProgress=std::max(0.0f,std::min(1.0f,(startupAnimationElapsed_-0.82f)/0.36f));
+        const float textEase=textProgress*textProgress*(3.0f-2.0f*textProgress);
+        topTextOffset=-190*static_cast<int>((1.0f-textEase)*1000.0f)/1000;
+        bottomTextOffset=190*static_cast<int>((1.0f-textEase)*1000.0f)/1000;
     }
     const bool invertBrowserText=invertTextColour_ && overlay_==Overlay::None;
     const auto browserTextColor=[invertBrowserText](SDL_Color color){
@@ -2389,7 +2420,7 @@ void Launcher::render(float dt){
         }else if(overlay_==Overlay::Settings){
             std::vector<std::string> names{
                 "Two-step game launch",
-                "Carousel spacing","Animation speed","Game title size",
+                "Carousel spacing","Animation speed","Startup animation","Game title size",
                 "Show game counter","Show battery level","Show control hints",
                 "Wrap game browsing","Invert text colour","Hide game title",
                 "Background","Reset settings"
@@ -2398,6 +2429,7 @@ void Launcher::render(float dt){
                 twoStepLaunch_?"ON":"OFF",
                 carouselSpacing_==0?"COMPACT":(carouselSpacing_==2?"WIDE":"NORMAL"),
                 animationSpeed_==0?"SLOW":(animationSpeed_==2?"FAST":"NORMAL"),
+                startupAnimationEnabled_?"ON":"OFF",
                 titleSize_==0?"SMALL":(titleSize_==2?"LARGE":"NORMAL"),
                 showGameCount_?"ON":"OFF",showBatteryLevel_?"ON":"OFF",
                 showControlHints_?"ON":"OFF",wrapGameBrowsing_?"ON":"OFF",
@@ -2642,11 +2674,26 @@ int Launcher::run(){
     Uint64 previous=SDL_GetPerformanceCounter();
     while(running_){
         SDL_Event e;
-        while(SDL_PollEvent(&e))handle(e);
+        while(SDL_PollEvent(&e)){
+            bool skipStartup=e.type==SDL_KEYDOWN || e.type==SDL_CONTROLLERBUTTONDOWN ||
+                             e.type==SDL_JOYBUTTONDOWN;
+            if(e.type==SDL_JOYHATMOTION && e.jhat.value!=SDL_HAT_CENTERED)
+                skipStartup=true;
+            if(e.type==SDL_JOYAXISMOTION && (e.jaxis.value>8000 || e.jaxis.value< -8000))
+                skipStartup=true;
+            if(e.type==SDL_CONTROLLERAXISMOTION && (e.caxis.value>8000 || e.caxis.value< -8000))
+                skipStartup=true;
+            if(skipStartup) startupAnimation_=false;
+            handle(e);
+        }
         updateHeldScroll(SDL_GetTicks64());
         const Uint64 now=SDL_GetPerformanceCounter();
         float dt=static_cast<float>(now-previous)/static_cast<float>(SDL_GetPerformanceFrequency());
         previous=now; dt=std::min(dt,0.05f);
+        if(startupAnimation_){
+            startupAnimationElapsed_+=dt;
+            if(startupAnimationElapsed_>=1.20f) startupAnimation_=false;
+        }
         if(launchAnimation_ && !launchAwaitingConfirm_){
             const float speed=animationSpeed_==0?0.75f:(animationSpeed_==2?1.35f:1.0f);
             if(launchReversing_){

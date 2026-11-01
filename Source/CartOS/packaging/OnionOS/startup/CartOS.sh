@@ -6,6 +6,7 @@ SDCARD=/mnt/SDCARD
 SYSDIR="$SDCARD/.tmp_update"
 RUNTIME="$SYSDIR/runtime.sh"
 APP="$SDCARD/App/CartOS/launch.sh"
+SKIP_ANIMATION_MARKER="$SDCARD/App/CartOS/.skip-startup-animation-once"
 BACKUP_DIR="$SYSDIR/CartOS-return-backup"
 BACKUP="$BACKUP_DIR/runtime.sh.before"
 TEMP="$SYSDIR/.runtime.sh.cartos.tmp"
@@ -23,11 +24,28 @@ queue_cartos() {
         log "left existing OnionOS launch queued"
         return 0
     fi
-    printf '%s\n' 'LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so sh "/mnt/SDCARD/App/CartOS/launch.sh"' > "$COMMAND_TEMP" || return 1
-    chmod 755 "$COMMAND_TEMP" || { rm -f "$COMMAND_TEMP"; return 1; }
-    mv -f "$COMMAND_TEMP" "$SYSDIR/cmd_to_run.sh" || { rm -f "$COMMAND_TEMP"; return 1; }
+    cartos_command='LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so sh "/mnt/SDCARD/App/CartOS/launch.sh"'
+    if [ "${1-}" = "skip-animation" ]; then
+        : > "$SKIP_ANIMATION_MARKER" || return 1
+        cartos_command="CARTOS_SKIP_STARTUP_ANIMATION=1 $cartos_command"
+    fi
+    printf '%s\n' "$cartos_command" > "$COMMAND_TEMP" || {
+        rm -f "$COMMAND_TEMP"
+        [ "${1-}" = "skip-animation" ] && rm -f "$SKIP_ANIMATION_MARKER"
+        return 1
+    }
+    chmod 755 "$COMMAND_TEMP" || {
+        rm -f "$COMMAND_TEMP"
+        [ "${1-}" = "skip-animation" ] && rm -f "$SKIP_ANIMATION_MARKER"
+        return 1
+    }
+    mv -f "$COMMAND_TEMP" "$SYSDIR/cmd_to_run.sh" || {
+        rm -f "$COMMAND_TEMP"
+        [ "${1-}" = "skip-animation" ] && rm -f "$SKIP_ANIMATION_MARKER"
+        return 1
+    }
     sync
-    log "queued CartOS for boot"
+    log "queued CartOS"
 }
 
 # OnionOS calls the same startup script after GameSwitcher exits.
@@ -36,7 +54,7 @@ if [ "${1-}" = "return" ]; then
         log "CartOS launch script missing; return skipped"
         exit 0
     fi
-    queue_cartos || log "could not queue CartOS after GameSwitcher"
+    queue_cartos skip-animation || log "could not queue CartOS after GameSwitcher"
     exit 0
 fi
 

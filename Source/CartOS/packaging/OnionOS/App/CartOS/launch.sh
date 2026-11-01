@@ -1,5 +1,8 @@
 #!/bin/sh
 APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -f "$APPDIR/.skip-startup-animation-once" ] && rm -f "$APPDIR/.skip-startup-animation-once"; then
+    export CARTOS_SKIP_STARTUP_ANIMATION=1
+fi
 export CARTOS_BASE_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export CARTOS_BASE_HOME="${HOME-__CARTOS_UNSET__}"
 export CARTOS_BASE_PATH="${PATH-__CARTOS_UNSET__}"

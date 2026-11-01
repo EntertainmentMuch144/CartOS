@@ -152,6 +152,9 @@ private:
     bool menuButtonHeld_=false;
     bool menuButtonChord_=false;
     bool launchAnimation_=false;
+    bool startupAnimationEnabled_=true;
+    bool startupAnimation_=false;
+    float startupAnimationElapsed_=0.0f;
     bool launchAwaitingConfirm_=false;
     bool launchReversing_=false;
     bool launchStepTwoConfirmed_=false;

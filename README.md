@@ -9,6 +9,7 @@ has been tested on the Miyoo Mini V4.
   artwork.
 - Browses Recent, Favourite, and custom game lists, with search and game details.
 - Searches with the on-screen keyboard, including spaces and punctuation.
+- Opens with a brief, configurable cartridge startup animation that can be skipped with input.
 - Shows playtime when Activity Tracker is installed, plus the handheld's
   battery level.
 - Browses installed OnionOS apps and hands games and apps back to OnionOS to
@@ -28,12 +29,14 @@ optional boot and GameSwitcher integration, and uninstall instructions.
 
 The optional `Startup/CartOS.sh` hook enables CartOS boot start and return from
 GameSwitcher. `Return/Restore-OnionOS.sh` reverses the hook. Neither script is
-needed for a normal app installation.
+needed for a normal app installation. When updating, replace the installed
+startup hook too if you use it; it is stored outside `App/CartOS`.
 
 ## Latest release
 
-CartOS 0.1.22 adds a space key and working punctuation to the on-screen search
-keyboard. See [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
+CartOS 0.1.23 adds a configurable cartridge startup animation, which is skipped
+when returning from GameSwitcher. See
+[`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
 
 ## Repository contents
 

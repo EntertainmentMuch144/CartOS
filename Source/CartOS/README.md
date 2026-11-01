@@ -12,6 +12,7 @@ This folder contains the C++ and SDL2 source code, assets, and packaging resourc
 - CartOS Settings can hide a system from the vertical browser list without deleting its ROMs or removing games from search and saved lists.
 - Background images named `BG.png` or `BG_<name>.png` can be selected in CartOS Settings; names in parentheses are shown without the filename prefix or parentheses.
 - The search keyboard includes a space key and working punctuation.
+- The browser has a configurable cartridge intro that can be skipped with input and is skipped on GameSwitcher return by the optional startup hook.
 
 For a normal installation, use the ready-to-copy `App/CartOS` folder and follow the installation guide at the repository root.
 

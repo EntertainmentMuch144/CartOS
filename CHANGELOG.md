@@ -2,6 +2,12 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.23 — Cartridge startup animation
+
+- Add a short startup sequence: the selected cartridge rises into view, the side cartridges slide into place, then the interface text appears.
+- Add a CartOS Settings option to disable the startup animation; it remains on by default.
+- Skip the animation automatically when CartOS is relaunched after GameSwitcher, using a one-time app-folder marker as well as a launch flag, and when the player presses a button or moves a direction.
+
 ## 0.1.22 — Search keyboard space and punctuation
 
 - Add a visible SPACE key to the on-screen search keyboard.
