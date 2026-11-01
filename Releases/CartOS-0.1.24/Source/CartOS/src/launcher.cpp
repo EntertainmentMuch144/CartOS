@@ -916,6 +916,7 @@ void Launcher::beginLaunchAnimation(size_t categoryIndex,size_t entryIndex){
         launchCenteringOffset_=(position_-selected)*spacing;
     }
     launchAwaitingConfirm_=false;
+    launchArtworkLoading_=false;
     launchReversing_=false;
     launchStepTwoConfirmed_=false;
     launchFirstPressAt_=SDL_GetTicks64();
@@ -2622,16 +2623,16 @@ void Launcher::render(float dt){
     if(launchAnimation_ && launchAwaitingConfirm_){
         const Game* preview=launchingGame();
         if(preview){
-            std::string info="NO ARTWORK VARIANTS";
-            if(previewShowingDetails_){
+            std::string info=launchArtworkLoading_?"LOADING IMAGES":"NO ARTWORK VARIANTS";
+            if(!launchArtworkLoading_ && previewShowingDetails_){
                 info="GAME DETAILS  "+std::to_string(preview->artVariants.size()+1)+" / "+
                      std::to_string(preview->artVariants.size()+1);
-            }else if(!preview->artVariants.empty()){
+            }else if(!launchArtworkLoading_ && !preview->artVariants.empty()){
                 const std::string artworkLabel=shortLabel(filenameWithoutExtension(preview->artPath),28);
                 info="IMAGE "+std::to_string(preview->artSelection+1)+" / "+
                      std::to_string(preview->artVariants.size())+"   "+artworkLabel;
             }
-            if(previewShowingDetails_) drawPreviewGameDetails(*preview);
+            if(!launchArtworkLoading_ && previewShowingDetails_) drawPreviewGameDetails(*preview);
             draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,browserTextColor(muted));
             const std::string hints="LEFT/RIGHT BROWSE   A LAUNCH   B BACK";
             draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,528,hints,15,browserTextColor(SDL_Color{150,154,162,255}));
@@ -2859,12 +2860,12 @@ void Launcher::renderSearch(){
         // title and system/count labels are omitted once the launch animation
         // starts instead of lingering at the bottom edge.
         if(launchAwaitingConfirm_){
-            std::string info="NO ARTWORK VARIANTS";
-            if(previewShowingDetails_){
+            std::string info=launchArtworkLoading_?"LOADING IMAGES":"NO ARTWORK VARIANTS";
+            if(!launchArtworkLoading_ && previewShowingDetails_){
                 info="GAME DETAILS  "+std::to_string(selected->artVariants.size()+1)+" / "+
                      std::to_string(selected->artVariants.size()+1);
                 drawPreviewGameDetails(*selected);
-            }else if(!selected->artVariants.empty()){
+            }else if(!launchArtworkLoading_ && !selected->artVariants.empty()){
                 const std::string artworkLabel=shortLabel(filenameWithoutExtension(selected->artPath),28);
                 info="IMAGE "+std::to_string(selected->artSelection+1)+" / "+
                      std::to_string(selected->artVariants.size())+"   "+artworkLabel;
@@ -2974,16 +2975,19 @@ int Launcher::run(){
             if(launchAnimation_ && !launchReversing_ && !launchStepTwoConfirmed_ && launchAnimationElapsed_>=stepOneDuration){
                 launchAnimationElapsed_=stepOneDuration;
                 launchAwaitingConfirm_=true;
-                // Extra artwork is only needed after this game reaches its
-                // enlarged preview. Defer directory discovery until now so
-                // startup does not inspect artwork for the entire ROM set.
-                if(Game* game=launchingGame()){
-                    loadArtworkVariants(*game);
-                    resetPreviewArtwork();
-                }
+                // Defer artwork discovery until the enlarged preview is on
+                // screen, then keep its loading message visible while scanning.
+                launchArtworkLoading_=true;
             }
         }
         render(dt);
+        if(launchArtworkLoading_ && launchAwaitingConfirm_){
+            if(Game* game=launchingGame()){
+                loadArtworkVariants(*game);
+                resetPreviewArtwork();
+            }
+            launchArtworkLoading_=false;
+        }
         if(!rendererVsync_) SDL_Delay(16);
         if(launchAnimation_ && !launchAwaitingConfirm_ && !launchReversing_ && launchAnimationElapsed_>=kLaunchAnimationDuration){
             launchAnimation_=false;

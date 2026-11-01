@@ -161,6 +161,7 @@ private:
     bool menuButtonHeld_=false;
     bool menuButtonChord_=false;
     bool launchAnimation_=false;
+    bool launchArtworkLoading_=false;
     bool startupAnimationEnabled_=true;
     bool startupAnimation_=false;
     float startupAnimationElapsed_=0.0f;
