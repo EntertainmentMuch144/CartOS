@@ -1,0 +1,208 @@
+CartOS 0.1.24 Beta — Installation Guide
+
+CartOS is a cartridge-style game browser for OnionOS handhelds. This release
+has been tested on the Miyoo Mini V4.
+
+The ZIP includes the ready-to-use CartOS app, source code, and license notices.
+You only need the App/CartOS folder for a normal installation. The optional
+CartOS boot-and-GameSwitcher hook is in Startup/CartOS.sh. A separate restore
+script is in Return/Restore-OnionOS.sh.
+
+========================================================
+BEFORE YOU START
+========================================================
+
+Shut down the handheld before removing its SD card. On the computer, open the
+card partition that contains the App and Roms folders. The card may have a
+different name or drive letter on each computer; identify it by its folders.
+
+========================================================
+INSTALL CARTOS
+========================================================
+
+1. Extract the CartOS ZIP on your computer.
+2. Copy the App/CartOS folder from the extracted ZIP into the App folder on
+   the SD card. The finished path should be App/CartOS, alongside the other
+   OnionOS apps.
+3. Safely eject the card, return it to the handheld, and turn it on.
+4. Open Apps and choose CartOS. If it is not listed, use OnionOS's app refresh
+   option or restart the handheld.
+
+========================================================
+UPDATE AN EXISTING INSTALLATION
+========================================================
+
+Before replacing the old App/CartOS folder, copy settings.ini and all BG*.png
+files from it to your computer if you want to keep your CartOS settings and
+backgrounds. Copy the new App/CartOS folder to the card, then put those files
+back inside the new App/CartOS folder. CartOS saves the selected background in
+settings.ini, so keep its matching image file too. Your OnionOS ROMs, saves,
+and collections are stored separately from the CartOS app folder.
+
+If you installed the optional boot/GameSwitcher hook, also replace
+.tmp_update/startup/CartOS.sh with Startup/CartOS.sh with the CartOS.sh from this update. 
+The hook is stored outside App/CartOS, so updating the app folder alone does not update
+the GameSwitcher return and startup animation behaviour. Show hidden files must
+be enabled to open .tmp_update; see SHOW HIDDEN FILES below.
+
+========================================================
+MULTIPLE ARTWORK IMAGES FOR A GAME
+========================================================
+
+CartOS uses the usual OnionOS image first. To add one extra PNG image for a
+game, place it in that system's Imgs/CartOS folder using the ROM title without
+its extension. 
+
+For example for Roms/GBA/Pokemon Emerald.gba, 
+the extra image would be:
+Roms/GBA/Imgs/CartOS/Pokemon Emerald.png
+
+To add more extra images for the same game, add " - " and a view name before
+the PNG extension:
+
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Backcover.png
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Boxart.png
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Gameplay.png
+
+For a ROM inside a subfolder, keep that ROM subfolder under Imgs/CartOS. For
+example, Roms/GBA/RPG/Example.gba uses:
+
+Roms/GBA/Imgs/CartOS/RPG/Example - Backcover.png
+Roms/GBA/Imgs/CartOS/RPG/Example - Gameplay.png
+
+The ROM title before " - " must match the ROM filename without its extension.
+The plain filename without a suffix is also accepted as one extra image.
+CartOS also continues to read the earlier per-ROM folder layout, such as
+Imgs/CartOS/Pokemon Emerald.gba/Backcover.png. If two ROMs in the same folder
+have the same title but different extensions, use that folder layout to keep
+their artwork separate.
+
+CartOS shows the normal OnionOS image first, then the plain-title image if
+present, followed by labelled images in alphabetical filename order. If no
+normal image is present, it starts with the first available extra image.
+CartOS can display up to 20 images for one game.
+
+While the cartridge is enlarged in the first launch step, press Left or Right
+to browse images. This changes the artwork in CartOS only; OnionOS's image is
+not changed, and the selection is not saved as the default. Press A to
+continue to launch, or B to return to the game list. Double-tap A from a game 
+list to launch directly without stopping at the image preview.
+
+========================================================
+OPTIONAL: START CARTOS ON BOOT AND RETURN FROM GAMESWITCHER
+========================================================
+
+This optional hook starts CartOS automatically and returns to it after you
+leave GameSwitcher. It leaves a game or app already queued by OnionOS alone.
+To enable both features:
+
+1. Enable Show hidden files on your computer using the instructions under
+   SHOW HIDDEN FILES below.
+2. On the SD card, open .tmp_update/startup. If startup does not exist, create
+   a folder named startup.
+3. From the extracted ZIP's Startup folder, copy CartOS.sh into that folder.
+   The final path on the SD card should be .tmp_update/startup/CartOS.sh.
+4. Safely eject the card and start the handheld. CartOS will start if OnionOS
+   has no game or app queued. The script adds a small marked GameSwitcher
+   return hook to runtime.sh; it does not replace the runtime file.
+5. Restart the handheld once more so OnionOS loads the updated runtime. After
+   that, leaving GameSwitcher returns to CartOS.
+
+The startup animation is enabled by default. Change Startup animation in
+CartOS Settings to turn it off. CartOS skips it automatically when returning
+from GameSwitcher.
+
+OnionOS runs scripts in .tmp_update/startup during startup. The first start
+adds the runtime change on the SD card; the next start loads it. Startup-script
+support was introduced in OnionOS 4.3. If the script does not recognize the
+runtime layout, it leaves runtime.sh unchanged, does not queue CartOS, and
+records the reason in .tmp_update/logs/cartos-runtime-hook.log.
+
+To turn both features off while keeping CartOS installed, shut down the
+handheld and remove the SD card. Delete .tmp_update/startup/CartOS.sh. Copy
+Return/Restore-OnionOS.sh from the ZIP into .tmp_update/startup, then return
+the card to the handheld and start it. The restore script removes CartOS's
+marked runtime change, removes itself, and clears CartOS's queued boot launch.
+CartOS remains available from Apps. No full-card backup or runtime backup is
+needed for this install or restore.
+
+========================================================
+SHOW HIDDEN FILES
+========================================================
+
+The .tmp_update folder is hidden. Enable Show hidden files to view and open it.
+Use the instructions below for your computer.
+
+macOS:
+
+- In Finder, select the SD card and press Command-Shift-period to show hidden
+  files. Press the same keys again to hide them.
+
+Windows 11:
+
+- In File Explorer, choose View > Show > Hidden items. Also turn on File name
+  extensions if you need to check the .sh filename. Open the SD card's
+  .tmp_update folder to add or remove the hook.
+
+Windows 10:
+
+- In File Explorer, open the View tab and check Hidden items. Open the SD
+  card's .tmp_update folder to add or remove the hook.
+
+Linux:
+
+- In the file manager, press Ctrl-H to show hidden files. Press Ctrl-H again
+  to hide them. Open the SD card's .tmp_update folder to add or remove the hook.
+
+========================================================
+CUSTOM BACKGROUND
+========================================================
+
+Copy a PNG image into App/CartOS and name it BG.png. You can add multiple
+backgrounds by naming them BG_Forest.png, BG_Space.png, and so on. The
+name in parentheses is shown in CartOS Settings under Background. In CartOS Settings, 
+move to Background and press left or right to choose an image, or choose NONE for a black
+background. For the best fit, use the device's native screen resolution:
+
+- Miyoo Mini V4 with OnionOS 560p support: 752 × 560 pixels.
+- Miyoo Mini V1-V3 or Miyoo Mini Plus: 640 × 480 pixels.
+- For another device running a compatible OnionOS build, use that device's
+  native screen resolution.
+
+CartOS scales the background to fill its display without distorting it. If the
+image's proportions differ, CartOS crops a little from the center, so keep
+important details away from the edges. The DEFAULT option uses BG.png; named
+backgrounds are loaded from the same App/CartOS folder. After adding or
+removing an image, press X in CartOS Settings to rescan backgrounds and refresh
+ROMs and lists.
+
+For light backgrounds, use Invert text colour in CartOS Settings to switch the
+main browser text to a darker palette. Hide game title removes the large game
+title from the browser. These settings work independently of the selected
+background.
+
+========================================================
+UNINSTALL CARTOS
+========================================================
+
+1. Shut down the handheld and remove the SD card.
+2. Open the card partition containing the App folder.
+3. If you enabled the boot-and-GameSwitcher hook, restore OnionOS first as
+   described above. Start the handheld once to run the restore script, then
+   shut it down and remove the SD card again.
+4. Delete App/CartOS.
+5. Safely eject the card, return it to the handheld, and turn it on.
+
+Deleting App/CartOS does not remove game ROMs or save files; those are stored
+elsewhere on the card. If you enabled the optional runtime hook, the restore
+script removes only CartOS's marked change from runtime.sh; it does not restore
+a backup. Only remove the specific CartOS files named above from .tmp_update;
+leave all other files and folders there untouched.
+
+========================================================
+SOURCE AND LICENSES
+========================================================
+
+The source is in Source/CartOS. See LICENSE and
+THIRD-PARTY-NOTICES.md for license terms and attribution. BUILD-INFO.txt lists
+the matching Miyoo SDL2 backend revision.

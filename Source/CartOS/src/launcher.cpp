@@ -32,6 +32,9 @@ constexpr float kLaunchReverseDuration=0.32f;
 constexpr Uint64 kLaunchDoubleTapWindowMs=380;
 constexpr Uint64 kScrollInitialDelayMs=360;
 constexpr Uint64 kScrollRepeatIntervalMs=180;
+void fillRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color);
+void outlineRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color);
+std::string shortLabel(std::string value,size_t limit);
 constexpr const char* kSearchKeyboardRows[]={
     "ABCDEFGHIJ",
     "KLMNOPQRST",
@@ -204,6 +207,14 @@ std::string comparableRomPath(const std::string& path,const std::string& sdRoot)
 bool regularFile(const std::string& path){
     struct stat info{};
     return stat(path.c_str(),&info)==0 && S_ISREG(info.st_mode);
+}
+
+std::string filenameWithoutExtension(const std::string& path){
+    const size_t slash=path.find_last_of('/');
+    std::string name=slash==std::string::npos?path:path.substr(slash+1);
+    const size_t dot=name.find_last_of('.');
+    if(dot!=std::string::npos && dot>0) name.resize(dot);
+    return name;
 }
 
 std::string shellDoubleQuote(const std::string& value){
@@ -453,6 +464,7 @@ void Launcher::discoverGames(){
     sdRoot_=sdRoot;
     systems_.clear();
     categories_.clear();
+    artworkDirectoryCache_.clear();
     discoverSystems(sdRoot);
     loadSettings();
     int variant=0;
@@ -485,7 +497,10 @@ void Launcher::discoverGames(){
                 struct stat pathInfo{};
                 const bool isDirectory=entry->d_type==DT_DIR ||
                     (entry->d_type==DT_UNKNOWN && stat(path.c_str(),&pathInfo)==0 && S_ISDIR(pathInfo.st_mode));
-                if(isDirectory){scanDirectory(path,depth+1);continue;}
+                if(isDirectory){
+                    scanDirectory(path,depth+1);
+                    continue;
+                }
                 if(entry->d_type!=DT_REG && !regularFile(path)) continue;
                 if(!supportedRom(filename,system)) continue;
                 const std::string title=filename.substr(0,filename.find_last_of('.'));
@@ -496,18 +511,22 @@ void Launcher::discoverGames(){
                 game.console=system.id;
                 game.romPath=path;
                 const std::string imageName=title+".png";
-                if(artworkFiles.count(imageName)) game.artPath=artworkDir+"/"+imageName;
+                if(artworkFiles.count(imageName)) game.defaultArtPath=artworkDir+"/"+imageName;
                 else {
                     const std::string siblingImage=dirPath+"/Imgs/"+imageName;
-                    if(regularFile(siblingImage)) game.artPath=siblingImage;
+                    if(regularFile(siblingImage)) game.defaultArtPath=siblingImage;
                 }
+                // Populate every category through the same artwork loader
+                // after Recent and saved lists have also been discovered.
+                game.artPath=game.defaultArtPath;
                 game.launcherPath=system.launcherPath;
                 game.variant=variant++;
                 category.entries.push_back(std::move(game));
             }
             closedir(dir);
         };
-        for(const std::string& romPath:system.romPaths) scanDirectory(romPath,0);
+        for(const std::string& romRoot:system.romPaths)
+            scanDirectory(romRoot,0);
         std::sort(category.entries.begin(),category.entries.end(),[](const Game& a,const Game& b){return lower(a.title)<lower(b.title);});
         // OnionOS can contain dozens of system configs. Keep the browser
         // focused on systems with at least one ROM actually present.
@@ -879,6 +898,8 @@ void Launcher::beginLaunchAnimation(size_t categoryIndex,size_t entryIndex){
     if(categoryIndex>=categories_.size() || entryIndex>=categories_[categoryIndex].entries.size()) return;
     launchAnimationCategory_=categoryIndex;
     launchAnimationEntry_=entryIndex;
+    previewShowingDetails_=false;
+    resetPreviewArtwork();
     launchAnimationElapsed_=0.0f;
     launchCenterDuration_=overlay_==Overlay::Search?0.0f:kLaunchCenterDuration;
     launchCenteringOffset_=0.0f;
@@ -901,6 +922,200 @@ void Launcher::beginLaunchAnimation(size_t categoryIndex,size_t entryIndex){
     launchAnimation_=true;
 }
 
+Game* Launcher::launchingGame(){
+    if(launchAnimationCategory_>=categories_.size() ||
+       launchAnimationEntry_>=categories_[launchAnimationCategory_].entries.size()) return nullptr;
+    return &categories_[launchAnimationCategory_].entries[launchAnimationEntry_];
+}
+
+void Launcher::loadArtworkVariants(Game& game){
+    if(game.kind!=EntryKind::Game) return;
+    if(game.artVariants.empty()){
+        const std::string primaryImage=!game.defaultArtPath.empty()?game.defaultArtPath:game.artPath;
+        if(!primaryImage.empty() && regularFile(primaryImage))
+            game.artVariants.push_back(primaryImage);
+        if(!game.artPath.empty() && regularFile(game.artPath) &&
+           std::find(game.artVariants.begin(),game.artVariants.end(),game.artPath)==game.artVariants.end())
+            game.artVariants.push_back(game.artPath);
+        const SystemInfo* system=systemForRomPath(game.romPath);
+        if(system){
+            if(game.artVariants.empty()){
+                const std::string conventional=system->artworkPath+"/"+filenameWithoutExtension(game.romPath)+".png";
+                if(regularFile(conventional)) game.artVariants.push_back(conventional);
+            }
+            std::string relativeRomPath;
+            // OnionOS and RetroArch histories may store the same ROM through
+            // paths containing a different SD root or `..` components.
+            // Normalize both sides before deriving the artwork subfolder.
+            const std::string normalizedGamePath=comparableRomPath(game.romPath,sdRoot_);
+            size_t rootIndex=0;
+            for(size_t i=0;i<system->romPaths.size();++i){
+                const std::string& romRoot=system->romPaths[i];
+                const std::string normalizedRoot=comparableRomPath(romRoot,sdRoot_);
+                if(normalizedGamePath.compare(0,normalizedRoot.size(),normalizedRoot)==0 &&
+                   normalizedGamePath.size()>normalizedRoot.size() && normalizedGamePath[normalizedRoot.size()]=='/'){
+                    relativeRomPath=normalizedGamePath.substr(normalizedRoot.size()+1);
+                    rootIndex=i;
+                    break;
+                }
+            }
+            if(!relativeRomPath.empty()){
+                if(system->romPaths.size()>1){
+                    const std::string& romRoot=system->romPaths[rootIndex];
+                    const size_t rootSlash=romRoot.find_last_of('/');
+                    const std::string rootLabel=rootSlash==std::string::npos?romRoot:romRoot.substr(rootSlash+1);
+                    relativeRomPath=rootLabel+"/"+relativeRomPath;
+                }
+                const size_t romSlash=relativeRomPath.find_last_of('/');
+                const std::string relativeDirectory=romSlash==std::string::npos?std::string():relativeRomPath.substr(0,romSlash);
+                const std::string romFilename=romSlash==std::string::npos?relativeRomPath:relativeRomPath.substr(romSlash+1);
+                const std::string romTitle=filenameWithoutExtension(romFilename);
+                const std::string variantsDirectory=system->artworkPath+"/CartOS"+
+                    (relativeDirectory.empty()?std::string():"/"+relativeDirectory);
+                const std::string legacyDirectory=system->artworkPath+"/CartOS/"+relativeRomPath;
+                std::vector<std::string> additionalImages;
+                auto scanArtworkDirectory=[&](const std::string& directory,bool flatNames){
+                    auto cached=artworkDirectoryCache_.find(directory);
+                    if(cached==artworkDirectoryCache_.end()){
+                        std::vector<std::string> imageNames;
+                        DIR* handle=opendir(directory.c_str());
+                        if(handle){
+                            while(dirent* entry=readdir(handle)){
+                                const std::string name=entry->d_name;
+                                if(name.empty() || name[0]=='.' || name.size()<5 ||
+                                   lower(name.substr(name.size()-4))!=".png") continue;
+                                if(regularFile(directory+"/"+name)) imageNames.push_back(name);
+                            }
+                            closedir(handle);
+                        }
+                        std::sort(imageNames.begin(),imageNames.end(),[](const std::string& a,const std::string& b){
+                            return lower(a)<lower(b);
+                        });
+                        cached=artworkDirectoryCache_.emplace(directory,std::move(imageNames)).first;
+                    }
+                    const std::string expectedPrefix=lower(romTitle+" - ");
+                    const std::string expectedSingleImage=lower(romTitle+".png");
+                    auto appendImage=[&](const std::string& name){
+                        const std::string image=directory+"/"+name;
+                        if(std::find(game.artVariants.begin(),game.artVariants.end(),image)==game.artVariants.end() &&
+                           std::find(additionalImages.begin(),additionalImages.end(),image)==additionalImages.end())
+                            additionalImages.push_back(image);
+                    };
+                    if(flatNames){
+                        // The CartOS artwork directory can contain hundreds or
+                        // thousands of images. Use the sorted cache to find
+                        // this ROM's names directly instead of rescanning the
+                        // entire directory for every game during startup.
+                        auto exact=std::lower_bound(cached->second.begin(),cached->second.end(),expectedSingleImage,
+                            [](const std::string& name,const std::string& value){return lower(name)<value;});
+                        for(;exact!=cached->second.end() && lower(*exact)==expectedSingleImage;++exact)
+                            appendImage(*exact);
+                        auto view=std::lower_bound(cached->second.begin(),cached->second.end(),expectedPrefix,
+                            [](const std::string& name,const std::string& value){return lower(name)<value;});
+                        for(;view!=cached->second.end();++view){
+                            const std::string comparableName=lower(*view);
+                            if(comparableName.compare(0,expectedPrefix.size(),expectedPrefix)!=0) break;
+                            if(comparableName.size()>expectedPrefix.size()+4)
+                                appendImage(*view);
+                        }
+                    }else{
+                        for(const std::string& name:cached->second) appendImage(name);
+                    }
+                };
+                // Flat names make it quick to add many views for a game, while
+                // still accepting the earlier per-ROM directory layout.
+                scanArtworkDirectory(variantsDirectory,true);
+                scanArtworkDirectory(legacyDirectory,false);
+                std::sort(additionalImages.begin(),additionalImages.end(),[&romTitle](const std::string& a,const std::string& b){
+                    const std::string aName=lower(a.substr(a.find_last_of('/')+1));
+                    const std::string bName=lower(b.substr(b.find_last_of('/')+1));
+                    const bool aSingleImage=aName==lower(romTitle+".png");
+                    const bool bSingleImage=bName==lower(romTitle+".png");
+                    if(aSingleImage!=bSingleImage) return aSingleImage;
+                    return aName==bName?lower(a)<lower(b):aName<bName;
+                });
+                for(const std::string& image:additionalImages){
+                    if(game.artVariants.size()>=20) break;
+                    game.artVariants.push_back(image);
+                }
+            }
+        }
+        if(!game.artVariants.empty() && game.defaultArtPath.empty()) game.defaultArtPath=game.artVariants.front();
+    }
+    if(game.artVariants.empty()) return;
+    if(game.artSelection>=game.artVariants.size()) game.artSelection=0;
+    game.artPath=game.artVariants[game.artSelection];
+}
+
+void Launcher::selectPreviewArtwork(size_t selection){
+    Game* game=launchingGame();
+    if(!game || game->artVariants.empty()) return;
+    game->artSelection=std::min(selection,game->artVariants.size()-1);
+    const std::string& image=game->artVariants[game->artSelection];
+    if(game->artPath==image) return;
+    game->artPath=image;
+    if(game->artwork){SDL_DestroyTexture(game->artwork);game->artwork=nullptr;}
+    game->artworkAttempted=false;
+}
+
+void Launcher::browsePreviewPage(int direction){
+    Game* game=launchingGame();
+    if(!game) return;
+    const size_t imageCount=game->artVariants.size();
+    if(previewShowingDetails_){
+        previewShowingDetails_=false;
+        if(imageCount>0)
+            selectPreviewArtwork(direction>0?0:imageCount-1);
+        return;
+    }
+    if(imageCount==0){
+        previewShowingDetails_=true;
+        return;
+    }
+    if(direction>0 && game->artSelection+1<imageCount){
+        selectPreviewArtwork(game->artSelection+1);
+    }else if(direction<0 && game->artSelection>0){
+        selectPreviewArtwork(game->artSelection-1);
+    }else{
+        previewShowingDetails_=true;
+    }
+}
+
+void Launcher::resetPreviewArtwork(){
+    Game* game=launchingGame();
+    previewShowingDetails_=false;
+    if(!game || game->artVariants.empty()) return;
+    selectPreviewArtwork(0);
+}
+
+void Launcher::drawPreviewGameDetails(const Game& game){
+    const SDL_Rect panel{76,116,600,328};
+    fillRect(renderer_,panel,{4,7,15,248});
+    outlineRect(renderer_,panel,{70,82,100,255});
+    const SDL_Color white{238,241,247,255};
+    const SDL_Color muted{150,158,171,255};
+    const std::string heading="GAME DETAILS";
+    draw::text(renderer_,(kDesignW-draw::textWidth(heading,25))/2,132,heading,25,white);
+    draw::text(renderer_,100,178,"TITLE",15,muted);
+    draw::text(renderer_,100,198,shortLabel(game.title,48),20,white);
+    draw::text(renderer_,100,236,"SYSTEM",15,muted);
+    draw::text(renderer_,100,256,game.system,20,white);
+    draw::text(renderer_,100,294,"PLAY TIME",15,muted);
+    const bool activityTrackerInstalled=access((sdRoot_+"/App/PlayActivity/launch.sh").c_str(),R_OK)==0;
+    const long long playedSeconds=activityTrackerInstalled?playtimeSecondsFor(game):-1;
+    std::string playtime=activityTrackerInstalled?"No playtime":"Install Activity Tracker to see playtime";
+    if(activityTrackerInstalled && playedSeconds>=3600)
+        playtime=std::to_string(playedSeconds/3600)+"h "+std::to_string((playedSeconds%3600)/60)+"m";
+    else if(activityTrackerInstalled && playedSeconds>=60)
+        playtime=std::to_string(playedSeconds/60)+"m";
+    else if(activityTrackerInstalled && playedSeconds>=0)
+        playtime=std::to_string(playedSeconds)+"s";
+    const int playtimeSize=activityTrackerInstalled?20:16;
+    draw::text(renderer_,100,314,shortLabel(playtime,56),playtimeSize,activityTrackerInstalled?white:muted);
+    draw::text(renderer_,100,352,"ROM FILE",15,muted);
+    draw::text(renderer_,100,372,shortLabel(game.romPath,62),16,white);
+}
+
 void Launcher::loadSettings(){
     const std::string data=readText(sdRoot_+"/App/CartOS/settings.ini");
     std::istringstream lines(data);
@@ -910,8 +1125,7 @@ void Launcher::loadSettings(){
         const size_t separator=line.find('=');
         if(separator==std::string::npos) continue;
         const std::string key=line.substr(0,separator), value=line.substr(separator+1);
-        if(key=="two_step_launch") twoStepLaunch_=(value=="1");
-        else if(key=="startup_animation") startupAnimationEnabled_=(value!="0");
+        if(key=="startup_animation") startupAnimationEnabled_=(value!="0");
         else if(key=="show_game_count") showGameCount_=(value!="0");
         else if(key=="show_battery_level") showBatteryLevel_=(value!="0");
         else if(key=="show_control_hints") showControlHints_=(value!="0");
@@ -947,8 +1161,7 @@ void Launcher::saveSettings() const{
     const std::string temporary=path+".tmp";
     std::ofstream file(temporary.c_str(),std::ios::out|std::ios::trunc);
     if(!file) return;
-    file<<"two_step_launch="<<(twoStepLaunch_?1:0)<<"\n"
-        <<"startup_animation="<<(startupAnimationEnabled_?1:0)<<"\n"
+    file<<"startup_animation="<<(startupAnimationEnabled_?1:0)<<"\n"
         <<"show_game_count="<<(showGameCount_?1:0)<<"\n"
         <<"show_battery_level="<<(showBatteryLevel_?1:0)<<"\n"
         <<"show_control_hints="<<(showControlHints_?1:0)<<"\n"
@@ -1063,10 +1276,8 @@ bool Launcher::selectBackground(int direction){
 void Launcher::changeSetting(int direction){
     const int systemCount=static_cast<int>(systems_.size());
     bool systemVisibilityChanged=false;
-    if(settingsSelection_==0){
-        twoStepLaunch_=!twoStepLaunch_;
-    }else if(settingsSelection_>=13){
-        const int systemSetting=settingsSelection_-13;
+    if(settingsSelection_>=12){
+        const int systemSetting=settingsSelection_-12;
         const int systemIndex=systemSetting/2;
         if(systemIndex>=0 && systemIndex<systemCount){
             const std::string& id=systems_[static_cast<size_t>(systemIndex)].id;
@@ -1079,19 +1290,18 @@ void Launcher::changeSetting(int direction){
         }
     }else{
         switch(settingsSelection_){
-            case 1: carouselSpacing_=wrapIndex(carouselSpacing_+direction,3); break;
-            case 2: animationSpeed_=wrapIndex(animationSpeed_+direction,3); break;
-            case 3: startupAnimationEnabled_=!startupAnimationEnabled_; break;
-            case 4: titleSize_=wrapIndex(titleSize_+direction,3); break;
-            case 5: showGameCount_=!showGameCount_; break;
-            case 6: showBatteryLevel_=!showBatteryLevel_; break;
-            case 7: showControlHints_=!showControlHints_; break;
-            case 8: wrapGameBrowsing_=!wrapGameBrowsing_; break;
-            case 9: invertTextColour_=!invertTextColour_; break;
-            case 10: hideGameTitle_=!hideGameTitle_; break;
-            case 11: selectBackground(direction); break;
-            case 12:
-                twoStepLaunch_=true;
+            case 0: carouselSpacing_=wrapIndex(carouselSpacing_+direction,3); break;
+            case 1: animationSpeed_=wrapIndex(animationSpeed_+direction,3); break;
+            case 2: startupAnimationEnabled_=!startupAnimationEnabled_; break;
+            case 3: titleSize_=wrapIndex(titleSize_+direction,3); break;
+            case 4: showGameCount_=!showGameCount_; break;
+            case 5: showBatteryLevel_=!showBatteryLevel_; break;
+            case 6: showControlHints_=!showControlHints_; break;
+            case 7: wrapGameBrowsing_=!wrapGameBrowsing_; break;
+            case 8: invertTextColour_=!invertTextColour_; break;
+            case 9: hideGameTitle_=!hideGameTitle_; break;
+            case 10: selectBackground(direction); break;
+            case 11:
                 startupAnimationEnabled_=true;
                 for(auto& scale:cartridgeScaleBySystem_) scale.second=1;
                 for(const SystemInfo& system:systems_) cartridgeScaleBySystem_[system.id]=1;
@@ -1110,7 +1320,7 @@ void Launcher::changeSetting(int direction){
     }
     saveSettings();
     if(systemVisibilityChanged){
-        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-13)/2)].id);
+        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-12)/2)].id);
         statusMessage_=hidden?"System hidden":"System shown";
         statusUntil_=SDL_GetTicks64()+1800;
     }
@@ -1126,7 +1336,7 @@ void Launcher::moveSettingsSelection(int direction){
 }
 
 int Launcher::settingsRowCount() const{
-    return static_cast<int>(systems_.size())*2+13;
+    return static_cast<int>(systems_.size())*2+12;
 }
 
 void Launcher::openOnionGameSwitcher(){
@@ -1842,12 +2052,30 @@ void Launcher::handle(const SDL_Event& e){
     if(launchAnimation_){
         const bool confirmPressed=(e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_A) ||
             (e.type==SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym==SDLK_RETURN || e.key.keysym.sym==SDLK_SPACE));
+        const bool previewLeft=(e.type==SDL_KEYDOWN && !e.key.repeat &&
+                                (e.key.keysym.sym==SDLK_LEFT || e.key.keysym.sym==SDLK_a)) ||
+                               (e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
+                               (e.type==SDL_JOYBUTTONDOWN && !controller_ && e.jbutton.button==2) ||
+                               (e.type==SDL_JOYHATMOTION && (e.jhat.value&SDL_HAT_LEFT)!=0);
+        const bool previewRight=(e.type==SDL_KEYDOWN && !e.key.repeat &&
+                                 (e.key.keysym.sym==SDLK_RIGHT || e.key.keysym.sym==SDLK_d)) ||
+                                (e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
+                                (e.type==SDL_JOYBUTTONDOWN && !controller_ && e.jbutton.button==3) ||
+                                (e.type==SDL_JOYHATMOTION && (e.jhat.value&SDL_HAT_RIGHT)!=0);
         if(launchAwaitingConfirm_){
             if(confirmPressed){
+                resetPreviewArtwork();
                 launchAwaitingConfirm_=false;
                 launchStepTwoConfirmed_=true;
+            }else if(previewLeft){
+                browsePreviewPage(-1);
+            }else if(previewRight){
+                browsePreviewPage(1);
             }else if((e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_B) ||
                      (e.type==SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym==SDLK_ESCAPE || e.key.keysym.sym==SDLK_BACKSPACE))){
+                // Restore the primary artwork before the first reverse frame,
+                // so B never briefly shows an alternate image in the browser.
+                resetPreviewArtwork();
                 launchAwaitingConfirm_=false;
                 launchReversing_=true;
                 launchReverseElapsed_=0.0f;
@@ -1869,7 +2097,7 @@ void Launcher::handle(const SDL_Event& e){
                     launchReverseStartScale_=(280.0f/220.0f)*1.34f;
                 }
             }
-        }else if(confirmPressed && twoStepLaunch_ && !launchReversing_ &&
+        }else if(confirmPressed && !launchReversing_ &&
                  SDL_GetTicks64()-launchFirstPressAt_<=kLaunchDoubleTapWindowMs){
             launchStepTwoConfirmed_=true;
         }
@@ -2294,8 +2522,10 @@ void Launcher::render(float dt){
             cy=startY+static_cast<int>((254-startY)*startupCenterEase);
         }
         const SDL_Rect box{cx-cw/2,cy-ch/2,cw,ch};
-        if(entry.kind==EntryKind::App) draw::appIcon(renderer_,box,entry.artwork,entry.variant,entry.onionMainUi);
-        else draw::cartridge(renderer_,box,entry.system,entry.title,entry.variant,distance<0.5f,entry.artwork);
+        if(!(launchAwaitingConfirm_ && previewShowingDetails_ && offset==0)){
+            if(entry.kind==EntryKind::App) draw::appIcon(renderer_,box,entry.artwork,entry.variant,entry.onionMainUi);
+            else draw::cartridge(renderer_,box,entry.system,entry.title,entry.variant,distance<0.5f,entry.artwork);
+        }
     }
     for(size_t i=0;i<entries.size();++i){
         if(entries[i].artwork && std::find(visible.begin(),visible.end(),static_cast<int>(i))==visible.end()){
@@ -2389,6 +2619,24 @@ void Launcher::render(float dt){
         const std::string hints="UP/DOWN LIST   LEFT/RIGHT GAME   A OPEN   X REFRESH   SELECT OPTIONS   Y SEARCH";
         draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,532+bottomTextOffset,hints,15,browserTextColor(SDL_Color{150,154,162,255}));
     }
+    if(launchAnimation_ && launchAwaitingConfirm_){
+        const Game* preview=launchingGame();
+        if(preview){
+            std::string info="NO ARTWORK VARIANTS";
+            if(previewShowingDetails_){
+                info="GAME DETAILS  "+std::to_string(preview->artVariants.size()+1)+" / "+
+                     std::to_string(preview->artVariants.size()+1);
+            }else if(!preview->artVariants.empty()){
+                const std::string artworkLabel=shortLabel(filenameWithoutExtension(preview->artPath),28);
+                info="IMAGE "+std::to_string(preview->artSelection+1)+" / "+
+                     std::to_string(preview->artVariants.size())+"   "+artworkLabel;
+            }
+            if(previewShowingDetails_) drawPreviewGameDetails(*preview);
+            draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,browserTextColor(muted));
+            const std::string hints="LEFT/RIGHT BROWSE   A LAUNCH   B BACK";
+            draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,528,hints,15,browserTextColor(SDL_Color{150,154,162,255}));
+        }
+    }
 
     if(overlay_!=Overlay::None){
         SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
@@ -2419,14 +2667,12 @@ void Launcher::render(float dt){
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,434,footer,15,muted);
         }else if(overlay_==Overlay::Settings){
             std::vector<std::string> names{
-                "Two-step game launch",
                 "Carousel spacing","Animation speed","Startup animation","Game title size",
                 "Show game counter","Show battery level","Show control hints",
                 "Wrap game browsing","Invert text colour","Hide game title",
                 "Background","Reset settings"
             };
             std::vector<std::string> values{
-                twoStepLaunch_?"ON":"OFF",
                 carouselSpacing_==0?"COMPACT":(carouselSpacing_==2?"WIDE":"NORMAL"),
                 animationSpeed_==0?"SLOW":(animationSpeed_==2?"FAST":"NORMAL"),
                 startupAnimationEnabled_?"ON":"OFF",
@@ -2591,7 +2837,8 @@ void Launcher::renderSearch(){
                 const int offscreenCenterY=kDesignH+height/2+30;
                 const int centerY=liftedCenterY+static_cast<int>((offscreenCenterY-liftedCenterY)*dropEase);
                 const SDL_Rect box{centerX-width/2,centerY-height/2,width,height};
-                draw::cartridge(renderer_,box,game.system,game.title,game.variant,true,game.artwork);
+                if(!(launchAwaitingConfirm_ && previewShowingDetails_))
+                    draw::cartridge(renderer_,box,game.system,game.title,game.variant,true,game.artwork);
             }else{
                 const float slide=std::max(0.0f,std::min(1.0f,animationTime/0.48f));
                 const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
@@ -2611,6 +2858,21 @@ void Launcher::renderSearch(){
         // The enlarged-cartridge view is intentionally artwork-only. The
         // title and system/count labels are omitted once the launch animation
         // starts instead of lingering at the bottom edge.
+        if(launchAwaitingConfirm_){
+            std::string info="NO ARTWORK VARIANTS";
+            if(previewShowingDetails_){
+                info="GAME DETAILS  "+std::to_string(selected->artVariants.size()+1)+" / "+
+                     std::to_string(selected->artVariants.size()+1);
+                drawPreviewGameDetails(*selected);
+            }else if(!selected->artVariants.empty()){
+                const std::string artworkLabel=shortLabel(filenameWithoutExtension(selected->artPath),28);
+                info="IMAGE "+std::to_string(selected->artSelection+1)+" / "+
+                     std::to_string(selected->artVariants.size())+"   "+artworkLabel;
+            }
+            draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,muted);
+            const std::string hints="LEFT/RIGHT BROWSE   A LAUNCH   B BACK";
+            draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,528,hints,15,muted);
+        }
         SDL_RenderPresent(renderer_);
         return;
     }
@@ -2703,14 +2965,22 @@ int Launcher::run(){
                     launchAnimation_=false;
                     launchReversing_=false;
                     launchStepTwoConfirmed_=false;
+                    resetPreviewArtwork();
                 }
             }else{
                 launchAnimationElapsed_+=dt*speed;
             }
             const float stepOneDuration=launchCenterDuration_+0.50f;
-            if(launchAnimation_ && !launchReversing_ && !launchStepTwoConfirmed_ && twoStepLaunch_ && launchAnimationElapsed_>=stepOneDuration){
+            if(launchAnimation_ && !launchReversing_ && !launchStepTwoConfirmed_ && launchAnimationElapsed_>=stepOneDuration){
                 launchAnimationElapsed_=stepOneDuration;
                 launchAwaitingConfirm_=true;
+                // Extra artwork is only needed after this game reaches its
+                // enlarged preview. Defer directory discovery until now so
+                // startup does not inspect artwork for the entire ROM set.
+                if(Game* game=launchingGame()){
+                    loadArtworkVariants(*game);
+                    resetPreviewArtwork();
+                }
             }
         }
         render(dt);

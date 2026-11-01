@@ -8,6 +8,7 @@ has been tested on the Miyoo Mini V4.
 - Finds configured game systems that contain ROMs and displays their cartridge
   artwork.
 - Browses Recent, Favourite, and custom game lists, with search and game details.
+- Previews a game's extra artwork and details in the enlarged view, including from Recent, Favourite, and custom lists.
 - Searches with the on-screen keyboard, including spaces and punctuation.
 - Opens with a brief, configurable cartridge startup animation that can be skipped with input.
 - Shows playtime when Activity Tracker is installed, plus the handheld's
@@ -22,8 +23,9 @@ has been tested on the Miyoo Mini V4.
 
 ## Install
 
-Download and extract the latest release ZIP from [`Releases`](Releases). Copy
-`App/CartOS` into the `App` folder on the OnionOS SD card. See
+Download and extract `CartOS-0.1.24.zip` from
+[`Releases/CartOS-0.1.24`](Releases/CartOS-0.1.24). From the extracted folder,
+copy `App/CartOS` into the `App` folder on the OnionOS SD card. See
 [`INSTALL.txt`](INSTALL.txt) for installation, updating, custom backgrounds,
 optional boot and GameSwitcher integration, and uninstall instructions.
 
@@ -34,13 +36,15 @@ startup hook too if you use it; it is stored outside `App/CartOS`.
 
 ## Latest release
 
-CartOS 0.1.23 adds a configurable cartridge startup animation, which is skipped
-when returning from GameSwitcher. See
+CartOS 0.1.24 adds per-game artwork previews and a game details page in the
+enlarged launch view. The main cartridge image remains the one used for the
+launch animation. See
 [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
 
 ## Repository contents
 
-- `App/CartOS/` — ready-to-copy OnionOS app.
+- `Releases/CartOS-0.1.24/App/CartOS/` — ready-to-copy OnionOS app for the
+  current release.
 - `Source/CartOS/` — CartOS source code and packaging resources.
 - `Releases/` — versioned release ZIPs and extracted packages.
 - `Startup/CartOS.sh` — optional boot-start and GameSwitcher return hook.

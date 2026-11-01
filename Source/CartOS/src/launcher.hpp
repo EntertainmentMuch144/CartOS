@@ -15,12 +15,15 @@ struct Game {
     std::string console;
     std::string romPath;
     std::string artPath;
+    std::string defaultArtPath;
+    std::vector<std::string> artVariants;
     std::string launcherPath;
     std::string workingDirectory;
     bool onionMainUi=false;
     bool cartLauncherSettings=false;
     SDL_Texture* artwork=nullptr;
     bool artworkAttempted=false;
+    size_t artSelection=0;
     int variant=0;
 };
 
@@ -73,6 +76,12 @@ private:
     void discoverApps(const std::string& sdRoot);
     void launchSelected();
     void beginLaunchAnimation(size_t categoryIndex, size_t entryIndex);
+    Game* launchingGame();
+    void browsePreviewPage(int direction);
+    void selectPreviewArtwork(size_t selection);
+    void resetPreviewArtwork();
+    void loadArtworkVariants(Game& game);
+    void drawPreviewGameDetails(const Game& game);
     void launchGame(const Game& game);
     void openOnionGameSwitcher();
     void beginMenuPress();
@@ -117,13 +126,13 @@ private:
     std::vector<Category> categories_;
     std::vector<SystemInfo> systems_;
     std::vector<int> rememberedSelections_;
+    std::unordered_map<std::string,std::vector<std::string>> artworkDirectoryCache_;
     std::string sdRoot_;
     std::string playtimeLookupRom_;
     long long playtimeLookupSeconds_=-1;
     std::array<bool,4> scrollHeld_{{false,false,false,false}};
     std::array<Uint64,4> scrollRepeatAt_{{0,0,0,0}};
     std::array<bool,4> scrollSettingsMode_{{false,false,false,false}};
-    bool twoStepLaunch_=true;
     bool showGameCount_=true;
     bool showBatteryLevel_=true;
     bool showControlHints_=true;
@@ -156,6 +165,7 @@ private:
     bool startupAnimation_=false;
     float startupAnimationElapsed_=0.0f;
     bool launchAwaitingConfirm_=false;
+    bool previewShowingDetails_=false;
     bool launchReversing_=false;
     bool launchStepTwoConfirmed_=false;
     size_t launchAnimationEntry_=0;

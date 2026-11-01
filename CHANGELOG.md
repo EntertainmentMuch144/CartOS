@@ -2,6 +2,20 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.24 — Per-game artwork preview
+
+- Speed up startup artwork discovery by indexing each extra-art folder once and looking up each game's images directly.
+- Defer extra-image lookup until a game reaches its enlarged preview, and load the same artwork from Recent, Favourite, and custom lists.
+- Resolve Recent entries through normalized ROM paths so their extra artwork folder is found even when history stores an alternate path form.
+- Always use the primary cartridge image for the launch animation, even when A is pressed from Game Details or an alternate image.
+- Accept a plain ROM-title PNG (for example, `Pokemon Emerald.png`) in `Imgs/CartOS` as one extra image; use names such as `Pokemon Emerald - Gameplay.png` for additional views. Continue supporting earlier per-ROM folders and show the plain-title image before labelled views.
+- Restore the primary cartridge image in the game list after leaving the enlarged artwork preview; alternate images remain preview-only.
+- Add a Game Details page after the artwork images in the enlarged launch preview, showing the title, system, playtime, and ROM filename.
+- Let Left/Right browse artwork in the enlarged first launch step, A continue, and B return to the centered game list.
+- Remove the Y set-default action from the artwork preview; artwork browsing is temporary to CartOS and OnionOS's artwork files are never changed.
+- Keep two-step launch enabled, with double-tap A available for direct launch.
+- Use one artwork discovery path for system lists, Recent, custom lists, and search.
+
 ## 0.1.23 — Cartridge startup animation
 
 - Add a short startup sequence: the selected cartridge rises into view, the side cartridges slide into place, then the interface text appears.

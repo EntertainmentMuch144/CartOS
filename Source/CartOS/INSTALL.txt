@@ -1,4 +1,4 @@
-CartOS 0.1.23 — Installation Guide
+CartOS 0.1.24 — Installation Guide
 
 CartOS is a cartridge-style game browser for OnionOS handhelds. This release
 has been tested on the Miyoo Mini V4.
@@ -32,16 +32,69 @@ INSTALL CARTOS
 UPDATE AN EXISTING INSTALLATION
 ========================================================
 
-Before replacing the old App/CartOS folder, copy settings.ini and all
-BG*.png files from it to your computer if you want to keep your CartOS settings
-and backgrounds. This includes BG.png and any named backgrounds, such as
-BG_(Forest).png or BG_Forest.png. Copy the new App/CartOS folder to the card,
-then put settings.ini and the background PNGs you want to keep back inside the
-new App/CartOS folder. CartOS saves the selected background in settings.ini,
-so keep its matching image file too. Your OnionOS ROMs, saves, and collections
-are stored separately from the CartOS app folder.
+Before replacing the old App/CartOS folder, copy settings.ini and all BG*.png
+files from it to your computer if you want to keep your CartOS settings and
+backgrounds. Copy the new App/CartOS folder to the card, then put those files
+back inside the new App/CartOS folder. CartOS saves the selected background in
+settings.ini, so keep its matching image file too. Your OnionOS ROMs, saves,
+and collections are stored separately from the CartOS app folder.
+
+If you installed the optional boot/GameSwitcher hook, also replace
+.tmp_update/startup/CartOS.sh with Startup/CartOS.sh with the CartOS.sh from this update. 
+The hook is stored outside App/CartOS, so updating the app folder alone does not update
+the GameSwitcher return and startup animation behaviour. Show hidden files must
+be enabled to open .tmp_update; see SHOW HIDDEN FILES below.
 
 ========================================================
+MULTIPLE ARTWORK IMAGES FOR A GAME
+========================================================
+
+CartOS uses the usual OnionOS image first. To add one extra PNG image for a
+game, place it in that system's Imgs/CartOS folder using the ROM title without
+its extension. 
+
+For example for Roms/GBA/Pokemon Emerald.gba, 
+the extra image would be:
+Roms/GBA/Imgs/CartOS/Pokemon Emerald.png
+
+To add more extra images for the same game, add " - " and a view name before
+the PNG extension:
+
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Backcover.png
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Boxart.png
+Roms/GBA/Imgs/CartOS/Pokemon Emerald - Gameplay.png
+
+For a ROM inside a subfolder, keep that ROM subfolder under Imgs/CartOS. For
+example, Roms/GBA/RPG/Example.gba uses:
+
+Roms/GBA/Imgs/CartOS/RPG/Example - Backcover.png
+Roms/GBA/Imgs/CartOS/RPG/Example - Gameplay.png
+
+The ROM title before " - " must match the ROM filename without its extension.
+The plain filename without a suffix is also accepted as one extra image.
+CartOS also continues to read the earlier per-ROM folder layout, such as
+Imgs/CartOS/Pokemon Emerald.gba/Backcover.png. If two ROMs in the same folder
+have the same title but different extensions, use that folder layout to keep
+their artwork separate.
+
+CartOS shows the normal OnionOS image first, then the plain-title image if
+present, followed by labelled images in alphabetical filename order. If no
+normal image is present, it starts with the first available extra image.
+CartOS can display up to 20 images for one game.
+
+While the cartridge is enlarged in the first launch step, press Left or Right
+to browse the images, followed by a Game Details page with the title, system,
+playtime, and ROM filename. Left and Right cycle through these pages. This
+changes the preview in CartOS only; OnionOS's image is not changed, and the
+selection is not saved as the default. Press A to continue to launch, or B to
+return to the game list. Pressing A from Game Details or an alternate image
+uses the main cartridge image for the launch animation. Two-step launch is
+always enabled in this release;
+double-tap A from a game list to launch directly without stopping at the
+preview.
+
+========================================================
+
 OPTIONAL: START CARTOS ON BOOT AND RETURN FROM GAMESWITCHER
 ========================================================
 
@@ -60,6 +113,10 @@ To enable both features:
    return hook to runtime.sh; it does not replace the runtime file.
 5. Restart the handheld once more so OnionOS loads the updated runtime. After
    that, leaving GameSwitcher returns to CartOS.
+
+The startup animation is enabled by default. Change Startup animation in
+CartOS Settings to turn it off. CartOS skips it automatically when returning
+from GameSwitcher.
 
 OnionOS runs scripts in .tmp_update/startup during startup. The first start
 adds the runtime change on the SD card; the next start loads it. Startup-script

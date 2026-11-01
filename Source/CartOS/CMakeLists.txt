@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(CartOS VERSION 0.1.23 LANGUAGES CXX)
+project(CartOS VERSION 0.1.24 LANGUAGES CXX)
 
 if(NOT CMAKE_CROSSCOMPILING OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv[0-9].*)$")
     message(FATAL_ERROR "CartOS builds only for the OnionOS ARM handheld target. Use tools/miyoo-toolchain.cmake.")
