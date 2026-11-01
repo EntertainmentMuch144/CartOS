@@ -39,8 +39,8 @@ back inside the new App/CartOS folder. CartOS saves the selected background in
 settings.ini, so keep its matching image file too. Your OnionOS ROMs, saves,
 and collections are stored separately from the CartOS app folder.
 
-If you installed the optional boot/GameSwitcher hook, also replace
-.tmp_update/startup/CartOS.sh with Startup/CartOS.sh with the CartOS.sh from this update. 
+If you are updating from v0.1.22, also replace .tmp_update/startup/CartOS.sh 
+with Startup/CartOS.sh with the CartOS.sh from this update. 
 The hook is stored outside App/CartOS, so updating the app folder alone does not update
 the GameSwitcher return and startup animation behaviour. Show hidden files must
 be enabled to open .tmp_update; see SHOW HIDDEN FILES below.
