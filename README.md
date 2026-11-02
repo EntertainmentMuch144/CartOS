@@ -1,7 +1,7 @@
 # CartOS
 
-CartOS is a cartridge-style game browser for OnionOS handhelds. This release
-has been tested on the Miyoo Mini V4.
+CartOS is a cartridge-style game browser for OnionOS handhelds. The current
+release is version 0.1.25; CartOS has been tested on the Miyoo Mini V4.
 
 ## Features
 
@@ -20,11 +20,17 @@ has been tested on the Miyoo Mini V4.
 - Chooses custom backgrounds such as `BG.png` and `BG_(Forest).png`, with text
   options for light backgrounds.
 - Hides systems from the vertical browser list without removing their games.
+- Uses the shoulder buttons for immediate jumps between starting letters in
+  alphabetized system game lists. Recent, Favourite, and custom lists keep normal scrolling.
+- Reorders lists from the Select menu or by editing the numbered `list_order_`
+  entries in `App/CartOS/settings.ini`.
+- Keeps the general settings in a fixed order, with per-system options at the
+  bottom; game browsing wraps at the ends by default.
 
 ## Install
 
-Download and extract `CartOS-0.1.24.zip` from
-[`Releases/CartOS-0.1.24`](Releases/CartOS-0.1.24). From the extracted folder,
+Download and extract `CartOS-0.1.25.zip` from
+[`Releases/CartOS-0.1.25`](Releases/CartOS-0.1.25). From the extracted folder,
 copy `App/CartOS` into the `App` folder on the OnionOS SD card. See
 [`INSTALL.txt`](INSTALL.txt) for installation, updating, custom backgrounds,
 optional boot and GameSwitcher integration, and uninstall instructions.
@@ -34,16 +40,18 @@ GameSwitcher. `Return/Restore-OnionOS.sh` reverses the hook. Neither script is
 needed for a normal app installation. When updating, replace the installed
 startup hook too if you are updating from V0.1.22.
 
-## Latest release
+## Current release
 
-CartOS 0.1.24 adds per-game artwork previews and a game details page in the
-enlarged launch view. The main cartridge image remains the one used for the
-launch animation. See
+CartOS 0.1.25 adds shoulder-button jumps between starting letters in
+alphabetized system game lists, in-app list ordering saved in `settings.ini`,
+and a one-time import for older `list-order.txt` files. It also reorders the
+settings menu and keeps per-system controls at the bottom.
+See
 [`CHANGELOG.md`](CHANGELOG.md) for the full patch notes.
 
 ## Repository contents
 
-- `Releases/CartOS-0.1.24/App/CartOS/` — ready-to-copy OnionOS app for the
+- `Releases/CartOS-0.1.25/App/CartOS/` — ready-to-copy OnionOS app for the
   current release.
 - `Source/CartOS/` — CartOS source code and packaging resources.
 - `Releases/` — versioned release ZIPs and extracted packages.

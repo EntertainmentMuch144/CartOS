@@ -14,6 +14,11 @@ if [ ! -d "$SDL2_LIB_DIR" ]; then
   exit 2
 fi
 APP="$ROOT/packaging/OnionOS/App/CartOS"
+if [ "${CARTOS_BETA_BUILD:-0}" = "1" ] || [ "${CARTOS_BETA_BUILD:-0}" = "ON" ] || [ "${CARTOS_BETA_BUILD:-0}" = "on" ]; then
+  BETA_OPTION=ON
+else
+  BETA_OPTION=OFF
+fi
 # The SDL2 backend imports the NEON memcpy and pixel-scaler ABI from a helper
 # with this soname. Build CartOS's own portable implementation rather than
 # copying the helper from the upstream SDL2 checkout.
@@ -28,6 +33,7 @@ rm -f "$APP/licenses/NEON-LICENSE-NOT-PROVIDED.txt"
 cmake -S "$ROOT" -B "$ROOT/build/miyoo" \
   -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/miyoo-toolchain.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCARTOS_BETA_BUILD="$BETA_OPTION" \
   -DSDL2_ROOT="$MIYOO_SDL2_ROOT" \
   -DMIYOO_NEON_LIBRARY:FILEPATH="$SDL2_LIB_DIR/libneonarmmiyoo.so" \
   -DCMAKE_PREFIX_PATH="$MIYOO_SDL2_ROOT" \

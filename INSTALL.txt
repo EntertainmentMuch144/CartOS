@@ -1,4 +1,4 @@
-CartOS 0.1.24 — Installation Guide
+CartOS 0.1.25 — Installation Guide
 
 CartOS is a cartridge-style game browser for OnionOS handhelds. This release
 has been tested on the Miyoo Mini V4.
@@ -35,15 +35,48 @@ UPDATE AN EXISTING INSTALLATION
 Before replacing the old App/CartOS folder, copy settings.ini and all BG*.png
 files from it to your computer if you want to keep your CartOS settings and
 backgrounds. Copy the new App/CartOS folder to the card, then put those files
-back inside the new App/CartOS folder. CartOS saves the selected background in
-settings.ini, so keep its matching image file too. Your OnionOS ROMs, saves,
-and collections are stored separately from the CartOS app folder.
+back inside the new App/CartOS folder. CartOS saves the list order and selected
+background in settings.ini, so keep the matching background image file too.
+If you are updating from an older build that used list-order.txt, also copy
+that file into the new App/CartOS folder for the first launch. CartOS imports
+its order into settings.ini automatically; after that, list-order.txt is no
+longer needed.
+Your OnionOS ROMs, saves, and collections are stored separately from the
+CartOS app folder.
 
-If you are updating from v0.1.22, also replace .tmp_update/startup/CartOS.sh 
-with Startup/CartOS.sh with the CartOS.sh from this update. 
-The hook is stored outside App/CartOS, so updating the app folder alone does not update
-the GameSwitcher return and startup animation behaviour. Show hidden files must
-be enabled to open .tmp_update; see SHOW HIDDEN FILES below.
+If you are updating from v0.1.22, replace .tmp_update/startup/CartOS.sh with
+the Startup/CartOS.sh included in this release. The hook is stored outside
+App/CartOS, so updating the app folder alone does not update GameSwitcher
+return and startup-animation behaviour. Show hidden files must be enabled to
+open .tmp_update; see SHOW HIDDEN FILES below.
+
+========================================================
+CHANGE THE VERTICAL LIST ORDER
+========================================================
+
+In CartOS, press Select and choose Move list up or Move list down. CartOS saves
+the order in App/CartOS/settings.ini, together with the other CartOS settings.
+This means a normal update only needs your settings.ini and any background
+images you want to keep.
+
+You can also edit the order on a computer by changing the numbered
+list_order_ entries in settings.ini. The keys are:
+
+- recent, favourite, and apps for the built-in lists.
+- system:<Emu folder ID> for a console, such as system:GBA.
+- collection:<list name> for a custom list, such as collection:Main.
+
+For example, list_order_0=recent and list_order_1=system:GBA. Keep the numbers
+in order starting at 0; the entry with the lowest number appears first. Newly
+detected lists are added at the end automatically. Hidden systems remain in
+the saved order and return to that position if shown again. Press X to refresh
+CartOS after editing settings.ini, or restart CartOS.
+
+In CartOS Settings, the general options appear in this order: Animation speed,
+Game title size, Show game counter, Show battery level, Show control hints,
+Hide game title, Carousel spacing, Startup animation, Background, Invert text
+colour, and Reset settings. Per-system cartridge size and visibility options
+follow at the bottom. Game browsing wraps at the ends by default.
 
 ========================================================
 MULTIPLE ARTWORK IMAGES FOR A GAME
@@ -51,9 +84,9 @@ MULTIPLE ARTWORK IMAGES FOR A GAME
 
 CartOS uses the usual OnionOS image first. To add one extra PNG image for a
 game, place it in that system's Imgs/CartOS folder using the ROM title without
-its extension. 
+its extension.
 
-For example for Roms/GBA/Pokemon Emerald.gba, 
+For example for Roms/GBA/Pokemon Emerald.gba,
 the extra image would be:
 Roms/GBA/Imgs/CartOS/Pokemon Emerald.png
 
@@ -85,8 +118,12 @@ CartOS can display up to 20 images for one game.
 While the cartridge is enlarged in the first launch step, press Left or Right
 to browse images. This changes the artwork in CartOS only; OnionOS's image is
 not changed, and the selection is not saved as the default. Press A to
-continue to launch, or B to return to the game list. Double-tap A from a game 
+continue to launch, or B to return to the game list. Double-tap A from a game
 list to launch directly without stopping at the image preview.
+
+In alphabetized system ROM lists, press L or R to jump to the previous or next
+starting-letter group. This shortcut is not active in Recent, Favourite, or
+custom lists.
 
 ========================================================
 OPTIONAL: START CARTOS ON BOOT AND RETURN FROM GAMESWITCHER
@@ -158,11 +195,11 @@ Linux:
 CUSTOM BACKGROUND
 ========================================================
 
-Copy a PNG image into App/CartOS and name it BG.png. You can add multiple
-backgrounds by naming them BG_Forest.png, BG_Space.png, and so on. The
-name in parentheses is shown in CartOS Settings under Background. In CartOS Settings, 
-move to Background and press left or right to choose an image, or choose NONE for a black
-background. For the best fit, use the device's native screen resolution:
+Copy a PNG image into App/CartOS and name the default BG.png. You can add
+multiple backgrounds with names such as BG_(Forest).png or BG_(Space).png.
+The name in parentheses appears in CartOS Settings under Background. Move to
+Background and press left or right to choose an image, or choose NONE for a
+black background. For the best fit, use the device's native screen resolution:
 
 - Miyoo Mini V4 with OnionOS 560p support: 752 × 560 pixels.
 - Miyoo Mini V1-V3 or Miyoo Mini Plus: 640 × 480 pixels.

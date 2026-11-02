@@ -58,6 +58,12 @@ std::string lower(std::string value){
     return value;
 }
 
+char titleInitialGroup(const std::string& title){
+    if(title.empty()) return '#';
+    const unsigned char first=static_cast<unsigned char>(title.front());
+    return std::isalpha(first)?static_cast<char>(std::toupper(first)):'#';
+}
+
 bool supportedRom(const std::string& filename,const SystemInfo& system){
     const size_t dot=filename.find_last_of('.');
     if(dot==std::string::npos || dot==0) return false;
@@ -377,6 +383,17 @@ size_t Launcher::adjacentVisibleCategory(int direction) const{
     return categoryIndex_;
 }
 
+size_t Launcher::adjacentReorderCategory(int direction) const{
+    if(categories_.empty() || direction==0) return categories_.size();
+    int candidate=static_cast<int>(categoryIndex_)+direction;
+    while(candidate>=0 && candidate<static_cast<int>(categories_.size())){
+        if(!systemHiddenFor(categories_[static_cast<size_t>(candidate)].systemId))
+            return static_cast<size_t>(candidate);
+        candidate+=direction;
+    }
+    return categories_.size();
+}
+
 bool Launcher::init(){
 #if defined(LAUNCHER_DEVICE)
     // The Miyoo SDL backend defaults to unsynchronized presentation. Request
@@ -474,6 +491,7 @@ void Launcher::discoverGames(){
         Category category;
         category.label=system.label;
         category.systemId=system.id;
+        category.orderKey="system:"+system.id;
         std::unordered_set<std::string> artworkFiles;
         const std::string artworkDir=system.artworkPath;
         DIR* artworkHandle=opendir(artworkDir.c_str());
@@ -540,6 +558,7 @@ void Launcher::discoverGames(){
     }),systems_.end());
     discoverCollections(sdRoot);
     discoverApps(sdRoot);
+    applyListOrder();
     rememberedSelections_.assign(categories_.size(),0);
     std::size_t total=0;
     for(const Category& category:categories_) total+=category.entries.size();
@@ -622,6 +641,7 @@ bool Launcher::systemHiddenFor(const std::string& systemId) const{
 void Launcher::discoverRecent(const std::string& sdRoot){
     Category recent;
     recent.label="recent";
+    recent.orderKey="recent";
     std::vector<std::string> seenPaths;
 
     auto addRecent=[&](const std::string& rawPath,const std::string& rawTitle,const SystemInfo* hintedSystem){
@@ -680,6 +700,7 @@ void Launcher::discoverCollections(const std::string& sdRoot){
         if(isUtilityEntry(label,"")) return;
         Category category;
         category.label=label;
+        category.orderKey=(label=="FAVOURITE")?"favourite":"collection:"+label;
         std::ifstream file(filePath.c_str());
         std::string line;
         int variant=0;
@@ -735,6 +756,7 @@ void Launcher::discoverApps(const std::string& sdRoot){
     DIR* dir=opendir(appRoot.c_str());
     Category apps;
     apps.label="APPS";
+    apps.orderKey="apps";
     int variant=0;
     if(dir){
     while(dirent* entry=readdir(dir)){
@@ -795,6 +817,61 @@ void Launcher::discoverApps(const std::string& sdRoot){
     categories_.push_back(std::move(apps));
 }
 
+void Launcher::applyListOrder(){
+    // Older builds stored the order in list-order.txt. Import it once when
+    // settings.ini has no saved order, then persist it with the other settings.
+    if(listOrder_.empty()){
+        const std::string legacyPath=sdRoot_+"/App/CartOS/list-order.txt";
+        std::ifstream legacyFile(legacyPath.c_str());
+        std::string line;
+        while(std::getline(legacyFile,line)){
+            const size_t first=line.find_first_not_of(" \t\r\n");
+            if(first==std::string::npos || line[first]=='#') continue;
+            const size_t last=line.find_last_not_of(" \t\r\n");
+            listOrder_.push_back(line.substr(first,last-first+1));
+        }
+    }
+
+    std::vector<Category> ordered;
+    ordered.reserve(categories_.size());
+    std::vector<bool> used(categories_.size(),false);
+    for(const std::string& key:listOrder_){
+        for(size_t index=0;index<categories_.size();++index){
+            if(!used[index] && categories_[index].orderKey==key){
+                ordered.push_back(std::move(categories_[index]));
+                used[index]=true;
+                break;
+            }
+        }
+    }
+    for(size_t index=0;index<categories_.size();++index)
+        if(!used[index]) ordered.push_back(std::move(categories_[index]));
+    categories_.swap(ordered);
+    saveListOrder();
+}
+
+void Launcher::saveListOrder(){
+    listOrder_.clear();
+    for(const Category& category:categories_)
+        listOrder_.push_back(category.orderKey);
+    saveSettings();
+}
+
+void Launcher::moveList(int direction){
+    if(direction==0 || categoryIndex_>=categories_.size()) return;
+    const size_t neighbor=adjacentReorderCategory(direction);
+    if(neighbor>=categories_.size()) return;
+    std::swap(categories_[categoryIndex_],categories_[neighbor]);
+    std::swap(rememberedSelections_[categoryIndex_],rememberedSelections_[neighbor]);
+    categoryIndex_=neighbor;
+    const int selection=rememberedSelections_[categoryIndex_];
+    position_=target_=static_cast<float>(selection);
+    saveListOrder();
+    statusMessage_=std::string("Moved list ")+(direction<0?"up":"down");
+    statusUntil_=SDL_GetTicks64()+1800;
+    overlay_=Overlay::None;
+}
+
 void Launcher::shutdown(){
     if(backgroundArtwork_){SDL_DestroyTexture(backgroundArtwork_);backgroundArtwork_=nullptr;}
     for(Category& category:categories_) clearArtwork(category.entries);
@@ -819,10 +896,24 @@ void Launcher::renderBackground(){
 
 void Launcher::move(int direction){
     Category* category=currentCategory();
-    if(category && !category->entries.empty()){
+    if(category && !category->entries.empty())
         target_+=static_cast<float>(direction);
-        if(!wrapGameBrowsing_)
-            target_=std::max(0.0f,std::min(target_,static_cast<float>(category->entries.size()-1)));
+}
+
+void Launcher::skipLetter(int direction){
+    const Category* category=currentCategory();
+    if(!category || category->systemId.empty() || category->entries.size()<2 || direction==0) return;
+    const int count=static_cast<int>(category->entries.size());
+    const int selected=wrapIndex(static_cast<int>(std::lround(target_)),count);
+    const char currentGroup=titleInitialGroup(category->entries[static_cast<size_t>(selected)].title);
+    for(int step=1;step<count;++step){
+        int candidate=selected+direction*step;
+        candidate=wrapIndex(candidate,count);
+        if(titleInitialGroup(category->entries[static_cast<size_t>(candidate)].title)!=currentGroup){
+            position_=target_=static_cast<float>(candidate);
+            rememberedSelections_[categoryIndex_]=candidate;
+            return;
+        }
     }
 }
 
@@ -1121,6 +1212,7 @@ void Launcher::loadSettings(){
     const std::string data=readText(sdRoot_+"/App/CartOS/settings.ini");
     std::istringstream lines(data);
     std::string line;
+    std::vector<std::pair<int,std::string>> storedListOrder;
     int legacyScale=-1;
     while(std::getline(lines,line)){
         const size_t separator=line.find('=');
@@ -1133,6 +1225,13 @@ void Launcher::loadSettings(){
         else if(key=="invert_text_colour") invertTextColour_=(value=="1");
         else if(key=="hide_game_title") hideGameTitle_=(value=="1");
         else if(key=="background_file") backgroundFile_=value;
+        else if(key.compare(0,11,"list_order_")==0){
+            const std::string indexText=key.substr(11);
+            if(!indexText.empty() && indexText.find_first_not_of("0123456789")==std::string::npos){
+                const int index=std::atoi(indexText.c_str());
+                if(index>=0 && index<4096) storedListOrder.emplace_back(index,value);
+            }
+        }
         else if(key=="cartridge_scale") legacyScale=std::max(0,std::min(2,std::atoi(value.c_str())));
         else if(key.compare(0,16,"cartridge_scale_")==0){
             const std::string id=key.substr(16);
@@ -1147,8 +1246,13 @@ void Launcher::loadSettings(){
         else if(key=="carousel_spacing") carouselSpacing_=std::max(0,std::min(2,std::atoi(value.c_str())));
         else if(key=="animation_speed") animationSpeed_=std::max(0,std::min(2,std::atoi(value.c_str())));
         else if(key=="title_size") titleSize_=std::max(0,std::min(2,std::atoi(value.c_str())));
-        else if(key=="wrap_game_browsing") wrapGameBrowsing_=(value!="0");
     }
+    std::sort(storedListOrder.begin(),storedListOrder.end(),[](const std::pair<int,std::string>& a,const std::pair<int,std::string>& b){
+        return a.first<b.first;
+    });
+    listOrder_.clear();
+    for(const std::pair<int,std::string>& item:storedListOrder)
+        listOrder_.push_back(item.second);
     for(const SystemInfo& system:systems_){
         if(cartridgeScaleBySystem_.find(system.id)==cartridgeScaleBySystem_.end())
             cartridgeScaleBySystem_[system.id]=(legacyScale>=0?legacyScale:1);
@@ -1171,8 +1275,9 @@ void Launcher::saveSettings() const{
         <<"background_file="<<backgroundFile_<<"\n"
         <<"carousel_spacing="<<carouselSpacing_<<"\n"
         <<"animation_speed="<<animationSpeed_<<"\n"
-        <<"title_size="<<titleSize_<<"\n"
-        <<"wrap_game_browsing="<<(wrapGameBrowsing_?1:0)<<"\n";
+        <<"title_size="<<titleSize_<<"\n";
+    for(size_t index=0;index<listOrder_.size();++index)
+        file<<"list_order_"<<index<<"="<<listOrder_[index]<<"\n";
     for(const auto& scale:cartridgeScaleBySystem_)
         file<<"cartridge_scale_"<<scale.first<<"="<<scale.second<<"\n";
     for(const auto& hidden:hiddenSystemById_)
@@ -1277,8 +1382,8 @@ bool Launcher::selectBackground(int direction){
 void Launcher::changeSetting(int direction){
     const int systemCount=static_cast<int>(systems_.size());
     bool systemVisibilityChanged=false;
-    if(settingsSelection_>=12){
-        const int systemSetting=settingsSelection_-12;
+    if(settingsSelection_>=11){
+        const int systemSetting=settingsSelection_-11;
         const int systemIndex=systemSetting/2;
         if(systemIndex>=0 && systemIndex<systemCount){
             const std::string& id=systems_[static_cast<size_t>(systemIndex)].id;
@@ -1291,18 +1396,17 @@ void Launcher::changeSetting(int direction){
         }
     }else{
         switch(settingsSelection_){
-            case 0: carouselSpacing_=wrapIndex(carouselSpacing_+direction,3); break;
-            case 1: animationSpeed_=wrapIndex(animationSpeed_+direction,3); break;
-            case 2: startupAnimationEnabled_=!startupAnimationEnabled_; break;
-            case 3: titleSize_=wrapIndex(titleSize_+direction,3); break;
-            case 4: showGameCount_=!showGameCount_; break;
-            case 5: showBatteryLevel_=!showBatteryLevel_; break;
-            case 6: showControlHints_=!showControlHints_; break;
-            case 7: wrapGameBrowsing_=!wrapGameBrowsing_; break;
-            case 8: invertTextColour_=!invertTextColour_; break;
-            case 9: hideGameTitle_=!hideGameTitle_; break;
-            case 10: selectBackground(direction); break;
-            case 11:
+            case 0: animationSpeed_=wrapIndex(animationSpeed_+direction,3); break;
+            case 1: titleSize_=wrapIndex(titleSize_+direction,3); break;
+            case 2: showGameCount_=!showGameCount_; break;
+            case 3: showBatteryLevel_=!showBatteryLevel_; break;
+            case 4: showControlHints_=!showControlHints_; break;
+            case 5: hideGameTitle_=!hideGameTitle_; break;
+            case 6: carouselSpacing_=wrapIndex(carouselSpacing_+direction,3); break;
+            case 7: startupAnimationEnabled_=!startupAnimationEnabled_; break;
+            case 8: selectBackground(direction); break;
+            case 9: invertTextColour_=!invertTextColour_; break;
+            case 10:
                 startupAnimationEnabled_=true;
                 for(auto& scale:cartridgeScaleBySystem_) scale.second=1;
                 for(const SystemInfo& system:systems_) cartridgeScaleBySystem_[system.id]=1;
@@ -1312,7 +1416,6 @@ void Launcher::changeSetting(int direction){
                 showGameCount_=true; showBatteryLevel_=true; showControlHints_=true;
                 invertTextColour_=false; hideGameTitle_=false;
                 backgroundFile_="BG.png";
-                wrapGameBrowsing_=true;
                 reloadBackgroundChoices();
                 statusMessage_="Settings reset";
                 statusUntil_=SDL_GetTicks64()+1800;
@@ -1321,7 +1424,7 @@ void Launcher::changeSetting(int direction){
     }
     saveSettings();
     if(systemVisibilityChanged){
-        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-12)/2)].id);
+        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-11)/2)].id);
         statusMessage_=hidden?"System hidden":"System shown";
         statusUntil_=SDL_GetTicks64()+1800;
     }
@@ -1337,7 +1440,7 @@ void Launcher::moveSettingsSelection(int direction){
 }
 
 int Launcher::settingsRowCount() const{
-    return static_cast<int>(systems_.size())*2+12;
+    return static_cast<int>(systems_.size())*2+11;
 }
 
 void Launcher::openOnionGameSwitcher(){
@@ -1614,24 +1717,37 @@ void Launcher::openSelectMenu(){
     menuOptions_.clear();
     if(category->entries.empty()){
         menuOptions_.push_back("Create new list");
+        if(adjacentReorderCategory(-1)<categories_.size()) menuOptions_.push_back("Move list up");
+        if(adjacentReorderCategory(1)<categories_.size()) menuOptions_.push_back("Move list down");
         const std::vector<std::string> names=customListNames();
         if(std::find(names.begin(),names.end(),category->label)!=names.end()) menuOptions_.push_back("Delete list...");
+        if(menuOptions_.empty()) return;
         overlaySelection_=0;
         overlay_=Overlay::SelectMenu;
         return;
     }
-    if(category->entries[static_cast<size_t>(wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(category->entries.size())))].kind!=EntryKind::Game) return;
+    const Game& selected=category->entries[static_cast<size_t>(wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(category->entries.size())))];
+    if(selected.kind!=EntryKind::Game){
+        if(adjacentReorderCategory(-1)<categories_.size()) menuOptions_.push_back("Move list up");
+        if(adjacentReorderCategory(1)<categories_.size()) menuOptions_.push_back("Move list down");
+        if(menuOptions_.empty()) return;
+        overlaySelection_=0;
+        overlay_=Overlay::SelectMenu;
+        return;
+    }
+    menuOptions_.push_back(isSelectedFavorite()?"Remove from favourites":"Add to favourites");
     menuOptions_.push_back("Add to list");
-    menuOptions_.push_back(isSelectedFavorite()?"Remove from favorites":"Add to favorites");
     menuOptions_.push_back("Create new list");
+    if(adjacentReorderCategory(-1)<categories_.size()) menuOptions_.push_back("Move list up");
+    if(adjacentReorderCategory(1)<categories_.size()) menuOptions_.push_back("Move list down");
     const std::vector<std::string> names=customListNames();
     const bool currentIsCustomList=std::find(names.begin(),names.end(),category->label)!=names.end();
+    menuOptions_.push_back("Game details");
+    menuOptions_.push_back("Play random game");
+    menuOptions_.push_back("Delete game");
     if(category->label=="FAVOURITE" || currentIsCustomList)
         menuOptions_.push_back("Remove from this list");
     if(currentIsCustomList) menuOptions_.push_back("Delete list...");
-    menuOptions_.push_back("Game details");
-    menuOptions_.push_back("Play a random game");
-    menuOptions_.push_back("Delete game...");
     overlaySelection_=0;
     overlay_=Overlay::SelectMenu;
 }
@@ -1984,7 +2100,11 @@ void Launcher::launchSearchSelected(){
 void Launcher::activateSelectMenu(){
     if(overlaySelection_<0 || static_cast<size_t>(overlaySelection_)>=menuOptions_.size()) return;
     const std::string action=menuOptions_[static_cast<size_t>(overlaySelection_)];
-    if(action=="Add to list"){
+    if(action=="Move list up"){
+        moveList(-1);
+    }else if(action=="Move list down"){
+        moveList(1);
+    }else if(action=="Add to list"){
         listOptions_=customListNames();
         if(listOptions_.empty()){
             statusMessage_="Create a list first";
@@ -1993,7 +2113,7 @@ void Launcher::activateSelectMenu(){
         }
         overlaySelection_=0;
         overlay_=Overlay::AddToList;
-    }else if(action=="Add to favorites" || action=="Remove from favorites"){
+    }else if(action=="Add to favourites" || action=="Remove from favourites"){
         toggleSelectedFavorite();
     }else if(action=="Create new list"){
         newListName_.clear();
@@ -2005,7 +2125,7 @@ void Launcher::activateSelectMenu(){
     }else if(action=="Game details"){
         playtimeLookupRom_.clear();
         overlay_=Overlay::GameInfo;
-    }else if(action=="Play a random game"){
+    }else if(action=="Play random game"){
         Category* category=currentCategory();
         if(category && !category->entries.empty()){
             const int index=std::rand()%static_cast<int>(category->entries.size());
@@ -2014,7 +2134,7 @@ void Launcher::activateSelectMenu(){
             overlay_=Overlay::None;
             launchSelected();
         }
-    }else if(action=="Delete game..."){
+    }else if(action=="Delete game"){
         overlaySelection_=1;
         overlay_=Overlay::DeleteConfirm;
     }else if(action=="Delete list..."){
@@ -2275,11 +2395,29 @@ void Launcher::handle(const SDL_Event& e){
             case SDLK_RIGHT: case SDLK_d: setScrollHeld(1,true); break;
             case SDLK_UP: case SDLK_w: setScrollHeld(2,true); break;
             case SDLK_DOWN: case SDLK_s: setScrollHeld(3,true); break;
+#if !defined(LAUNCHER_DEVICE)
+            case SDLK_PAGEUP: skipLetter(-1); break;
+            case SDLK_PAGEDOWN: skipLetter(1); break;
+#endif
             case SDLK_RETURN: case SDLK_SPACE: case SDLK_LALT: launchSelected(); break;
-            case SDLK_RSHIFT: case SDLK_TAB: openSelectMenu(); break;
+            case SDLK_RSHIFT: openSelectMenu(); break;
+            case SDLK_TAB:
+#if defined(LAUNCHER_DEVICE)
+                skipLetter(-1);
+#else
+                openSelectMenu();
+#endif
+                break;
             case SDLK_y: startSearch(); break;
             case SDLK_x: refreshAll(); break;
-            case SDLK_ESCAPE: case SDLK_BACKSPACE: case SDLK_LCTRL: running_=false; break;
+            case SDLK_ESCAPE: case SDLK_LCTRL: running_=false; break;
+            case SDLK_BACKSPACE:
+#if defined(LAUNCHER_DEVICE)
+                skipLetter(1);
+#else
+                running_=false;
+#endif
+                break;
         }
     }
     if(e.type==SDL_CONTROLLERBUTTONDOWN){
@@ -2288,6 +2426,8 @@ void Launcher::handle(const SDL_Event& e){
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: setScrollHeld(1,true); break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP: setScrollHeld(2,true); break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN: setScrollHeld(3,true); break;
+            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: skipLetter(-1); break;
+            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: skipLetter(1); break;
             case SDL_CONTROLLER_BUTTON_A: launchSelected(); break;
             case SDL_CONTROLLER_BUTTON_B: break;
             case SDL_CONTROLLER_BUTTON_BACK: openSelectMenu(); break;
@@ -2426,20 +2566,12 @@ void Launcher::render(float dt){
     if(!launchAnimation_) position_+=(target_-position_)*(1.0f-std::exp(-dt*28.0f));
     const int entryCount=static_cast<int>(entries.size());
     const float count=static_cast<float>(entryCount);
-    if(!wrapGameBrowsing_){
-        position_=std::max(0.0f,std::min(position_,count-1.0f));
-        target_=std::max(0.0f,std::min(target_,count-1.0f));
-    }
     if(std::fabs(target_-position_)<0.001f){
         position_=target_;
-        if(wrapGameBrowsing_){
-            const float turns=std::floor(position_/count);
-            position_-=turns*count; target_-=turns*count;
-        }
+        const float turns=std::floor(position_/count);
+        position_-=turns*count; target_-=turns*count;
     }
-    rememberedSelections_[categoryIndex_]=wrapGameBrowsing_
-        ?wrapIndex(static_cast<int>(std::lround(target_)),entryCount)
-        :std::max(0,std::min(static_cast<int>(std::lround(target_)),entryCount-1));
+    rememberedSelections_[categoryIndex_]=wrapIndex(static_cast<int>(std::lround(target_)),entryCount);
     renderBackground();
 
     // Keep the carousel's geometric center unwrapped while it animates across
@@ -2450,13 +2582,11 @@ void Launcher::render(float dt){
     std::array<int,3> visible{{-1,-1,-1}};
     for(int offset=-1;offset<=1;++offset){
         const int candidate=centerUnwrapped+offset;
-        if(!wrapGameBrowsing_ && (candidate<0 || candidate>=entryCount)) continue;
-        visible[static_cast<size_t>(offset+1)]=wrapGameBrowsing_?wrapIndex(candidate,entryCount):candidate;
+        visible[static_cast<size_t>(offset+1)]=wrapIndex(candidate,entryCount);
     }
     for(int offset:drawOrder){
         const int candidate=centerUnwrapped+offset;
-        if(!wrapGameBrowsing_ && (candidate<0 || candidate>=entryCount)) continue;
-        const int idx=wrapGameBrowsing_?wrapIndex(candidate,entryCount):candidate;
+        const int idx=wrapIndex(candidate,entryCount);
         Game& entry=entries[static_cast<size_t>(idx)];
         if(!entry.artwork && !entry.artworkAttempted && !entry.artPath.empty()){
             entry.artworkAttempted=true;
@@ -2536,9 +2666,7 @@ void Launcher::render(float dt){
         }
     }
 
-    const int chosen=wrapGameBrowsing_
-        ?wrapIndex(static_cast<int>(std::lround(position_)),entryCount)
-        :std::max(0,std::min(static_cast<int>(std::lround(position_)),entryCount-1));
+    const int chosen=wrapIndex(static_cast<int>(std::lround(position_)),entryCount);
     std::string title=entries[static_cast<size_t>(chosen)].title;
     const int titleHeight=titleSize_==0?26:(titleSize_==2?34:30);
     while(!title.empty() && draw::textWidth(title,titleHeight)>kDesignW-40){
@@ -2617,8 +2745,17 @@ void Launcher::render(float dt){
         arrow(renderer_,kDesignW/2,501+bottomTextOffset,false,subheader);
     }
     if(showControlHints_){
-        const std::string hints="UP/DOWN LIST   LEFT/RIGHT GAME   A OPEN   X REFRESH   SELECT OPTIONS   Y SEARCH";
-        draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,532+bottomTextOffset,hints,15,browserTextColor(SDL_Color{150,154,162,255}));
+        bool letterJumpAvailable=selectedCategory && !selectedCategory->systemId.empty() &&
+            selectedCategory->entries.size()>1;
+        if(letterJumpAvailable){
+            const char firstGroup=titleInitialGroup(selectedCategory->entries.front().title);
+            letterJumpAvailable=std::any_of(selectedCategory->entries.begin()+1,selectedCategory->entries.end(),
+                [firstGroup](const Game& game){return titleInitialGroup(game.title)!=firstGroup;});
+        }
+        const std::string hints=(letterJumpAvailable?"L/R LETTER   ":"")+std::string("UP/DOWN LIST   LEFT/RIGHT GAME   A OPEN   X REFRESH   SELECT OPTIONS   Y SEARCH");
+        int hintSize=15;
+        while(hintSize>11 && draw::textWidth(hints,hintSize)>kDesignW-12) --hintSize;
+        draw::text(renderer_,(kDesignW-draw::textWidth(hints,hintSize))/2,532+bottomTextOffset,hints,hintSize,browserTextColor(SDL_Color{150,154,162,255}));
     }
     if(launchAnimation_ && launchAwaitingConfirm_){
         const Game* preview=launchingGame();
@@ -2668,21 +2805,20 @@ void Launcher::render(float dt){
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,434,footer,15,muted);
         }else if(overlay_==Overlay::Settings){
             std::vector<std::string> names{
-                "Carousel spacing","Animation speed","Startup animation","Game title size",
-                "Show game counter","Show battery level","Show control hints",
-                "Wrap game browsing","Invert text colour","Hide game title",
-                "Background","Reset settings"
+                "Animation speed","Game title size","Show game counter","Show battery level",
+                "Show control hints","Hide game title","Carousel spacing","Startup animation",
+                "Background","Invert text colour","Reset settings"
             };
             std::vector<std::string> values{
-                carouselSpacing_==0?"COMPACT":(carouselSpacing_==2?"WIDE":"NORMAL"),
                 animationSpeed_==0?"SLOW":(animationSpeed_==2?"FAST":"NORMAL"),
-                startupAnimationEnabled_?"ON":"OFF",
                 titleSize_==0?"SMALL":(titleSize_==2?"LARGE":"NORMAL"),
                 showGameCount_?"ON":"OFF",showBatteryLevel_?"ON":"OFF",
-                showControlHints_?"ON":"OFF",wrapGameBrowsing_?"ON":"OFF",
-                invertTextColour_?"ON":"OFF",hideGameTitle_?"ON":"OFF",
+                showControlHints_?"ON":"OFF",hideGameTitle_?"ON":"OFF",
+                carouselSpacing_==0?"COMPACT":(carouselSpacing_==2?"WIDE":"NORMAL"),
+                startupAnimationEnabled_?"ON":"OFF",
                 backgroundSelection_>=0 && backgroundSelection_<static_cast<int>(backgroundChoices_.size())
                     ?backgroundChoices_[static_cast<size_t>(backgroundSelection_)].label:"NONE",
+                invertTextColour_?"ON":"OFF",
                 "RESTORE DEFAULTS"
             };
             // Keep per-system sizing together at the end so that systems

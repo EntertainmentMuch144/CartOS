@@ -43,7 +43,7 @@ def add_tree(archive: zipfile.ZipFile, source: Path, archive_root: str) -> None:
             continue
         if relative.parts[:4] == ("packaging", "OnionOS", "App", "CartOS"):
             continue
-        if path.name == ".DS_Store" or path.suffix == ".pyc":
+        if path.name == ".DS_Store" or path.name.startswith("._") or path.suffix == ".pyc":
             continue
         arcname = f"{archive_root}/{relative.as_posix()}"
         # Store symlink targets as ordinary files so extraction works in Finder,
@@ -60,6 +60,8 @@ def main() -> None:
                         help="Git revision used to build the bundled Miyoo SDL2 runtime")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist",
                         help="folder in which to write the ZIP")
+    parser.add_argument("--beta", action="store_true",
+                        help="label this package as a Beta build")
     args = parser.parse_args()
 
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -88,7 +90,8 @@ def main() -> None:
     require_file(ROOT / "LICENSE", "CartOS source license")
     require_file(ROOT / "THIRD-PARTY-NOTICES.md", "third-party notices")
     require_file(CHANGELOG, "patch notes")
-    package_name = f"CartOS-{version}"
+    version_label = f"{version} Beta" if args.beta else version
+    package_name = f"CartOS-{version}" + ("-Beta" if args.beta else "")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     destination = args.output_dir / f"{package_name}.zip"
     with tempfile.NamedTemporaryFile(prefix=f".{package_name}-", suffix=".zip",
@@ -106,7 +109,7 @@ def main() -> None:
             archive.write(startup_hook, f"{package_root}/Startup/CartOS.sh")
             archive.write(restore_hook, f"{package_root}/Return/Restore-OnionOS.sh")
             build_info = (
-                f"CartOS version: {version}\n"
+                f"CartOS version: {version_label}\n"
                 f"Miyoo SDL2 backend source: https://github.com/XK9274/sdl2_miyoo\n"
                 f"Miyoo SDL2 backend revision: {args.sdl_revision}\n"
                 "The matching backend source is available at the pinned public source revision.\n"

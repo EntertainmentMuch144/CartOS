@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.13)
-project(CartOS VERSION 0.1.24 LANGUAGES CXX)
+project(CartOS VERSION 0.1.25 LANGUAGES CXX)
+
+option(CARTOS_BETA_BUILD "Append Beta to the displayed CartOS version" OFF)
+if(CARTOS_BETA_BUILD)
+    set(CARTOS_VERSION_LABEL "${PROJECT_VERSION} Beta")
+else()
+    set(CARTOS_VERSION_LABEL "${PROJECT_VERSION}")
+endif()
 
 if(NOT CMAKE_CROSSCOMPILING OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv[0-9].*)$")
     message(FATAL_ERROR "CartOS builds only for the OnionOS ARM handheld target. Use tools/miyoo-toolchain.cmake.")
@@ -63,7 +70,7 @@ add_executable(cartos
     src/draw.cpp
 )
 target_include_directories(cartos PRIVATE src)
-target_compile_definitions(cartos PRIVATE CARTOS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(cartos PRIVATE CARTOS_VERSION="${CARTOS_VERSION_LABEL}")
 target_link_libraries(cartos PRIVATE SDL2::SDL2 PNG::PNG)
 
 # The build script creates CartOS's ABI-compatible helper in the target SDL2

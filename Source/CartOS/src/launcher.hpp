@@ -30,6 +30,7 @@ struct Game {
 struct Category {
     std::string label;
     std::string systemId;
+    std::string orderKey;
     std::vector<Game> entries;
 };
 
@@ -57,6 +58,7 @@ private:
     void shutdown();
     void handle(const SDL_Event& e);
     void move(int direction);
+    void skipLetter(int direction);
     void moveCategory(int direction);
     void setScrollHeld(int direction, bool held);
     void updateHeldScroll(Uint64 now);
@@ -74,6 +76,9 @@ private:
     void discoverGames();
     void discoverCollections(const std::string& sdRoot);
     void discoverApps(const std::string& sdRoot);
+    void applyListOrder();
+    void saveListOrder();
+    void moveList(int direction);
     void launchSelected();
     void beginLaunchAnimation(size_t categoryIndex, size_t entryIndex);
     Game* launchingGame();
@@ -109,6 +114,7 @@ private:
     Category* currentCategory();
     const Category* currentCategory() const;
     size_t adjacentVisibleCategory(int direction) const;
+    size_t adjacentReorderCategory(int direction) const;
     const SystemInfo* systemForLauncher(const std::string& launcher) const;
     const SystemInfo* systemForRomPath(const std::string& romPath) const;
     int cartridgeScaleFor(const std::string& systemId) const;
@@ -126,6 +132,7 @@ private:
     std::vector<Category> categories_;
     std::vector<SystemInfo> systems_;
     std::vector<int> rememberedSelections_;
+    std::vector<std::string> listOrder_;
     std::unordered_map<std::string,std::vector<std::string>> artworkDirectoryCache_;
     std::string sdRoot_;
     std::string playtimeLookupRom_;
@@ -143,7 +150,6 @@ private:
     int carouselSpacing_=1;
     int animationSpeed_=1;
     int titleSize_=1;
-    bool wrapGameBrowsing_=true;
     int batteryPercent_=-1;
     Uint32 batteryPollAt_=0;
     Overlay overlay_=Overlay::None;

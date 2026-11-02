@@ -2,6 +2,22 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.25 — Navigation, list ordering, and settings
+
+- Reorder CartOS Settings to: Animation speed, Game title size, Show game counter,
+  Show battery level, Show control hints, Hide game title, Carousel spacing,
+  Startup animation, Background, Invert text colour, and Reset settings.
+- Remove the Wrap game browsing setting; game browsing continues to wrap at the ends.
+- Keep per-system cartridge sizing and visibility options after the general settings.
+- Omit macOS Finder metadata files from the install ZIP.
+- Make L/R shoulder-button jumps to the previous or next starting-letter group immediate in alphabetized system ROM lists, without cartridge animation.
+- Keep letter jumps unavailable in Recent, Favourite, and custom lists.
+- Show the `L/R LETTER` control hint only while browsing a system ROM list.
+- Add Move list up and Move list down actions to the Select menu, preserving the selected list and game.
+- Save the vertical order in `App/CartOS/settings.ini` so updates only need the settings file and background images preserved; new lists are appended automatically.
+- Import the order from older `list-order.txt` files automatically on first launch.
+- Order the Select menu with favourite/list creation actions first, then list movement, details, random play, and game deletion.
+
 ## 0.1.24 — Per-game artwork preview
 
 - Speed up startup artwork discovery by indexing each extra-art folder once and looking up each game's images directly.
