@@ -4,6 +4,7 @@ Changes are listed newest first. Each entry describes the user-visible changes a
 
 ## 0.1.25 — Navigation, list ordering, and settings
 
+- Fix returning to CartOS from GameSwitcher after a game resumes from a power-off by preserving the game-session marker on the SD card; update the startup hook in place and clear the marker after CartOS is queued.
 - Reorder CartOS Settings to: Animation speed, Game title size, Show game counter,
   Show battery level, Show control hints, Hide game title, Carousel spacing,
   Startup animation, Background, Invert text colour, and Reset settings.
