@@ -29,6 +29,44 @@ INSTALL CARTOS
    option or restart the handheld.
 
 ========================================================
+OPTIONAL: START CARTOS ON BOOT AND RETURN FROM GAMESWITCHER
+========================================================
+
+This optional hook starts CartOS automatically and returns to it after you
+leave GameSwitcher. It leaves a game or app already queued by OnionOS alone.
+To enable both features:
+
+1. Enable Show hidden files on your computer using the instructions under
+   SHOW HIDDEN FILES below.
+2. On the SD card, open .tmp_update/startup. If startup does not exist, create
+   a folder named startup.
+3. From the extracted ZIP's Startup folder, copy CartOS.sh into that folder.
+   The final path on the SD card should be .tmp_update/startup/CartOS.sh.
+4. Safely eject the card and start the handheld. CartOS will start if OnionOS
+   has no game or app queued. The script adds a small marked GameSwitcher
+   return hook to runtime.sh; it does not replace the runtime file.
+5. Restart the handheld once more so OnionOS loads the updated runtime. After
+   that, leaving GameSwitcher returns to CartOS.
+
+The startup animation is enabled by default. Change Startup animation in
+CartOS Settings to turn it off. CartOS skips it automatically when returning
+from GameSwitcher.
+
+OnionOS runs scripts in .tmp_update/startup during startup. The first start
+adds the runtime change on the SD card; the next start loads it. Startup-script
+support was introduced in OnionOS 4.3. If the script does not recognize the
+runtime layout, it leaves runtime.sh unchanged, does not queue CartOS, and
+records the reason in .tmp_update/logs/cartos-runtime-hook.log.
+
+To turn both features off while keeping CartOS installed, shut down the
+handheld and remove the SD card. Delete .tmp_update/startup/CartOS.sh. Copy
+Return/Restore-OnionOS.sh from the ZIP into .tmp_update/startup, then return
+the card to the handheld and start it. The restore script removes CartOS's
+marked runtime change, removes itself, and clears CartOS's queued boot launch.
+CartOS remains available from Apps. No full-card backup or runtime backup is
+needed for this install or restore.
+
+========================================================
 UPDATE AN EXISTING INSTALLATION
 ========================================================
 
@@ -124,44 +162,6 @@ list to launch directly without stopping at the image preview.
 In alphabetized system ROM lists, press L or R to jump to the previous or next
 starting-letter group. This shortcut is not active in Recent, Favourite, or
 custom lists.
-
-========================================================
-OPTIONAL: START CARTOS ON BOOT AND RETURN FROM GAMESWITCHER
-========================================================
-
-This optional hook starts CartOS automatically and returns to it after you
-leave GameSwitcher. It leaves a game or app already queued by OnionOS alone.
-To enable both features:
-
-1. Enable Show hidden files on your computer using the instructions under
-   SHOW HIDDEN FILES below.
-2. On the SD card, open .tmp_update/startup. If startup does not exist, create
-   a folder named startup.
-3. From the extracted ZIP's Startup folder, copy CartOS.sh into that folder.
-   The final path on the SD card should be .tmp_update/startup/CartOS.sh.
-4. Safely eject the card and start the handheld. CartOS will start if OnionOS
-   has no game or app queued. The script adds a small marked GameSwitcher
-   return hook to runtime.sh; it does not replace the runtime file.
-5. Restart the handheld once more so OnionOS loads the updated runtime. After
-   that, leaving GameSwitcher returns to CartOS.
-
-The startup animation is enabled by default. Change Startup animation in
-CartOS Settings to turn it off. CartOS skips it automatically when returning
-from GameSwitcher.
-
-OnionOS runs scripts in .tmp_update/startup during startup. The first start
-adds the runtime change on the SD card; the next start loads it. Startup-script
-support was introduced in OnionOS 4.3. If the script does not recognize the
-runtime layout, it leaves runtime.sh unchanged, does not queue CartOS, and
-records the reason in .tmp_update/logs/cartos-runtime-hook.log.
-
-To turn both features off while keeping CartOS installed, shut down the
-handheld and remove the SD card. Delete .tmp_update/startup/CartOS.sh. Copy
-Return/Restore-OnionOS.sh from the ZIP into .tmp_update/startup, then return
-the card to the handheld and start it. The restore script removes CartOS's
-marked runtime change, removes itself, and clears CartOS's queued boot launch.
-CartOS remains available from Apps. No full-card backup or runtime backup is
-needed for this install or restore.
 
 ========================================================
 SHOW HIDDEN FILES
