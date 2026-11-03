@@ -1,4 +1,6 @@
 # CartOS
+CartOS is a cartridge-style game browser for OnionOS handhelds. The current
+release is version 0.1.25; CartOS has been tested on the Miyoo Mini V4.
 
 ## RECENT BUG FIX
 
@@ -10,9 +12,6 @@ startup hook. Existing users must replace both `App/CartOS` and
 `.tmp_update/startup/CartOS.sh` with the files from the updated release. Start
 the handheld once to update OnionOS's runtime hook, then restart once more to
 load the change. See [`INSTALL.txt`](INSTALL.txt) for the update steps.
-
-CartOS is a cartridge-style game browser for OnionOS handhelds. The current
-release is version 0.1.25; CartOS has been tested on the Miyoo Mini V4.
 
 ## Features
 
