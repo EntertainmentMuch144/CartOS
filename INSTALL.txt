@@ -89,6 +89,33 @@ return and startup-animation behaviour. Show hidden files must be enabled to
 open .tmp_update; see SHOW HIDDEN FILES below.
 
 ========================================================
+CUSTOM BACKGROUNDS
+========================================================
+
+Copy a PNG image into App/CartOS and name the default BG.png. You can add
+multiple backgrounds with names such as BG_(Forest).png or BG_(Space).png.
+The name in parentheses appears in CartOS Settings under Background. Move to
+Background and press left or right to choose an image, or choose NONE for a
+black background. For the best fit, use the device's native screen resolution:
+
+- Miyoo Mini V4 with OnionOS 560p support: 752 × 560 pixels.
+- Miyoo Mini V1-V3 or Miyoo Mini Plus: 640 × 480 pixels.
+- For another device running a compatible OnionOS build, use that device's
+  native screen resolution.
+
+CartOS scales the background to fill its display without distorting it. If the
+image's proportions differ, CartOS crops a little from the center, so keep
+important details away from the edges. The DEFAULT option uses BG.png; named
+backgrounds are loaded from the same App/CartOS folder. After adding or
+removing an image, press X in CartOS Settings to rescan backgrounds and refresh
+ROMs and lists.
+
+For light backgrounds, use Invert text colour in CartOS Settings to switch the
+main browser text to a darker palette. Hide game title removes the large game
+title from the browser. These settings work independently of the selected
+background.
+
+========================================================
 CHANGE THE VERTICAL LIST ORDER
 ========================================================
 
@@ -190,33 +217,6 @@ Linux:
 
 - In the file manager, press Ctrl-H to show hidden files. Press Ctrl-H again
   to hide them. Open the SD card's .tmp_update folder to add or remove the hook.
-
-========================================================
-CUSTOM BACKGROUND
-========================================================
-
-Copy a PNG image into App/CartOS and name the default BG.png. You can add
-multiple backgrounds with names such as BG_(Forest).png or BG_(Space).png.
-The name in parentheses appears in CartOS Settings under Background. Move to
-Background and press left or right to choose an image, or choose NONE for a
-black background. For the best fit, use the device's native screen resolution:
-
-- Miyoo Mini V4 with OnionOS 560p support: 752 × 560 pixels.
-- Miyoo Mini V1-V3 or Miyoo Mini Plus: 640 × 480 pixels.
-- For another device running a compatible OnionOS build, use that device's
-  native screen resolution.
-
-CartOS scales the background to fill its display without distorting it. If the
-image's proportions differ, CartOS crops a little from the center, so keep
-important details away from the edges. The DEFAULT option uses BG.png; named
-backgrounds are loaded from the same App/CartOS folder. After adding or
-removing an image, press X in CartOS Settings to rescan backgrounds and refresh
-ROMs and lists.
-
-For light backgrounds, use Invert text colour in CartOS Settings to switch the
-main browser text to a darker palette. Hide game title removes the large game
-title from the browser. These settings work independently of the selected
-background.
 
 ========================================================
 UNINSTALL CARTOS
