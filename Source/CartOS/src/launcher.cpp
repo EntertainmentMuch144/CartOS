@@ -1524,6 +1524,7 @@ void Launcher::launchGame(const Game& entry){
         // recents, CPU/audio setup, and normal emulator teardown.
         const std::string commandPath="/mnt/SDCARD/.tmp_update/cmd_to_run.sh";
         const std::string temporaryPath=commandPath+".cartos.tmp";
+        const std::string persistentReturnMarker=sdRoot_+"/.tmp_update/cartos_return_to_launcher";
         const int returnMarker=open("/tmp/cartos_return_to_launcher",O_WRONLY|O_CREAT|O_TRUNC,0644);
         if(returnMarker>=0) close(returnMarker);
         else std::perror("mark CartOS game session");
@@ -1545,11 +1546,29 @@ void Launcher::launchGame(const Game& entry){
             output.close();
             if(!output){
                 std::fprintf(stderr,"Could not finish writing OnionOS game command\n");
+                unlink("/tmp/cartos_return_to_launcher");
                 _exit(127);
             }
         }
+        // Keep a durable session marker on the SD card as well as the /tmp
+        // marker. OnionOS may resume this game after a full power-off, which
+        // clears /tmp before GameSwitcher returns to its main UI.
+        const int persistentMarker=open(persistentReturnMarker.c_str(),O_WRONLY|O_CREAT|O_TRUNC,0644);
+        if(persistentMarker>=0){
+            const bool markerFlushed=fsync(persistentMarker)==0;
+            const bool markerClosed=close(persistentMarker)==0;
+            if(markerFlushed && markerClosed)
+                sync();
+            else {
+                std::perror("flush CartOS game return marker");
+                unlink(persistentReturnMarker.c_str());
+            }
+        }else
+            std::perror("save CartOS game return marker");
         if(chmod(temporaryPath.c_str(),0755)!=0 || rename(temporaryPath.c_str(),commandPath.c_str())!=0){
             std::perror("install OnionOS game command");
+            unlink("/tmp/cartos_return_to_launcher");
+            unlink(persistentReturnMarker.c_str());
             _exit(127);
         }
         const int quickSwitch=open("/tmp/quick_switch",O_WRONLY|O_CREAT,0644);

@@ -40,7 +40,7 @@ else
     if ! awk '
         /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
         in_function && /# CartOS startup and GameSwitcher return hook/ { state=1; next }
-        state==1 && /if \[ -f \/tmp\/cartos_return_to_launcher \]; then/ { state=2; next }
+        state==1 && /if[[:space:]]+\[.*\/tmp\/cartos_return_to_launcher.*\];[[:space:]]*then/ { state=2; next }
         state==2 && /rm -f \/tmp\/cartos_return_to_launcher/ { state=3; next }
         state==3 && /sh "\$sysdir\/startup\/CartOS\.sh" return/ { state=4; next }
         state==4 && /elif \[ -f \/tmp\/run_advmenu \]; then/ {
@@ -71,6 +71,7 @@ if [ -f "$SYSDIR/cmd_to_run.sh" ] && grep -qF '/mnt/SDCARD/App/CartOS/launch.sh'
     rm -f "$SYSDIR/cmd_to_run.sh"
 fi
 rm -f /tmp/cartos_return_to_launcher
+rm -f "$SYSDIR/cartos_return_to_launcher"
 rm -f "$SYSDIR/startup/CartOS.sh" "$SYSDIR/startup/GameSwitcher-Return.sh" "$0"
 sync
 log "removed CartOS runtime hook and startup launch"

@@ -10,6 +10,7 @@ CartOS is a cartridge-style game browser for OnionOS handhelds. Version 0.1.25 h
 - Press Left/Right to browse the artwork and then a Game Details page with the title, system, playtime, and ROM filename. A continues launching, and B returns to the centered game list.
 - Always use the main cartridge image for the launch animation, including when A is pressed from an alternate image or Game Details. Extra-art discovery is indexed to avoid scanning the full artwork folder for every ROM during startup.
 - Keep the two-step launch preview enabled; double-tap A from the game list to launch directly.
+- Save the GameSwitcher return request on the SD card when launching a game, so a game resumed after a power-off can still return to CartOS.
 - Use L/R shoulder buttons for immediate jumps between starting letters in alphabetized system ROM lists. Recent, Favourite, and custom lists keep normal scrolling.
 - Reorder lists from the Select menu or by editing the numbered `list_order_`
   entries in `App/CartOS/settings.ini`. Older `list-order.txt` files are

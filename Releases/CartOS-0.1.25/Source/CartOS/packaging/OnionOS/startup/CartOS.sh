@@ -21,6 +21,14 @@ log() {
 
 queue_cartos() {
     if [ -e "$SYSDIR/cmd_to_run.sh" ]; then
+        # If CartOS is already queued, its return is already guaranteed. Clear
+        # the durable game-session marker only for that CartOS command; retain
+        # it when OnionOS has another game or app pending.
+        if [ "${2-}" = "clear-game-marker" ] &&
+           grep -qF '/mnt/SDCARD/App/CartOS/launch.sh' "$SYSDIR/cmd_to_run.sh"; then
+            rm -f "$SYSDIR/cartos_return_to_launcher"
+            sync
+        fi
         log "left existing OnionOS launch queued"
         return 0
     fi
@@ -45,6 +53,10 @@ queue_cartos() {
         return 1
     }
     sync
+    if [ "${2-}" = "clear-game-marker" ]; then
+        rm -f "$SYSDIR/cartos_return_to_launcher"
+        sync
+    fi
     log "queued CartOS"
 }
 
@@ -54,7 +66,7 @@ if [ "${1-}" = "return" ]; then
         log "CartOS launch script missing; return skipped"
         exit 0
     fi
-    queue_cartos skip-animation || log "could not queue CartOS after GameSwitcher"
+    queue_cartos skip-animation clear-game-marker || log "could not queue CartOS after GameSwitcher"
     exit 0
 fi
 
@@ -107,15 +119,61 @@ if awk '
     log "updated earlier return hook to use CartOS startup script"
 fi
 
-# Check whether our exact hook is already installed.
+# Keep an existing current hook up to date. Previous CartOS releases checked
+# only /tmp, which loses the return marker if the device powers off in a game.
 if awk '
+    /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+    in_function && /CartOS startup and GameSwitcher return hook/ { installed=1 }
+    in_function && /\/tmp\/cartos_return_to_launcher.*\|\|/ { volatile_marker=1 }
+    in_function && /\$sysdir\/cartos_return_to_launcher/ { persistent_marker=1 }
+    in_function && /startup\/CartOS\.sh.*return/ { callback=1 }
+    in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+    END { exit !(installed && volatile_marker && persistent_marker && callback) }
+' "$RUNTIME"; then
+    log "runtime return hook already installed"
+elif awk '
     /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
     in_function && /CartOS startup and GameSwitcher return hook/ { installed=1 }
     in_function && /startup\/CartOS\.sh.*return/ { callback=1 }
     in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
     END { exit !(installed && callback) }
 ' "$RUNTIME"; then
-    log "runtime return hook already installed"
+    # Replace only CartOS's marked block, preserving the rest of the OnionOS
+    # runtime and its original return-to-MainUI branch.
+    if ! awk '
+        /^[[:space:]]*check_main_ui[[:space:]]*\(\)[[:space:]]*\{/ { in_function=1 }
+        in_function && /# CartOS startup and GameSwitcher return hook/ {
+            indent=$0; sub(/#.*/, "", indent)
+            print indent "# CartOS startup and GameSwitcher return hook"
+            print indent "if [ -f /tmp/cartos_return_to_launcher ] || [ -f \"$sysdir/cartos_return_to_launcher\" ]; then"
+            print indent "    rm -f /tmp/cartos_return_to_launcher"
+            print indent "    sh \"$sysdir/startup/CartOS.sh\" return"
+            upgraded=1
+            replacing=1
+            next
+        }
+        replacing && /elif[[:space:]]+\[[[:space:]]+-f[[:space:]]+\/tmp\/run_advmenu[[:space:]]*\];[[:space:]]*then/ {
+            print
+            replacing=0
+            anchor=1
+            next
+        }
+        replacing { next }
+        { print }
+        in_function && /^[[:space:]]*}[[:space:]]*$/ { in_function=0 }
+        END { if (!upgraded || !anchor) exit 3 }
+    ' "$RUNTIME" > "$TEMP"; then
+        rm -f "$TEMP"
+        log "could not upgrade marked runtime hook; runtime left unchanged"
+        exit 0
+    fi
+    if ! chmod 755 "$TEMP" || ! mv -f "$TEMP" "$RUNTIME"; then
+        rm -f "$TEMP"
+        log "could not install updated runtime hook; original left unchanged"
+        exit 0
+    fi
+    sync
+    log "upgraded runtime hook for power-off game resume"
 else
     # Prepare a candidate first. Unknown OnionOS runtime layouts are left alone.
     if ! awk '
@@ -124,7 +182,7 @@ else
             indent=$0
             sub(/if.*/, "", indent)
             print indent "# CartOS startup and GameSwitcher return hook"
-            print indent "if [ -f /tmp/cartos_return_to_launcher ]; then"
+            print indent "if [ -f /tmp/cartos_return_to_launcher ] || [ -f \"$sysdir/cartos_return_to_launcher\" ]; then"
             print indent "    rm -f /tmp/cartos_return_to_launcher"
             print indent "    sh \"$sysdir/startup/CartOS.sh\" return"
             print indent "elif [ -f /tmp/run_advmenu ]; then"
