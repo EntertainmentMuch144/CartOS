@@ -15,6 +15,7 @@ load the change. See [`INSTALL.txt`](INSTALL.txt) for the update steps.
 
 ## Features
 
+- Double click A to launch straight into your selected game.
 - Finds configured game systems that contain ROMs and displays their cartridge
   artwork.
 - Browses Recent, Favourite, and custom game lists, with search and game details.
