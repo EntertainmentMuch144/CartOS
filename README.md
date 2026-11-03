@@ -38,7 +38,7 @@ optional boot and GameSwitcher integration, and uninstall instructions.
 The optional `Startup/CartOS.sh` hook enables CartOS boot start and return from
 GameSwitcher. `Return/Restore-OnionOS.sh` reverses the hook. Neither script is
 needed for a normal app installation. When updating, replace the installed
-startup hook too if you are updating from V0.1.22.
+startup hook too if you are updating from V0.1.21.
 
 ## Current release
 
