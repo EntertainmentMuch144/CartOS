@@ -1,5 +1,16 @@
 # CartOS
 
+## RECENT BUG FIX
+
+CartOS 0.1.25 now keeps the GameSwitcher return marker on the SD card when it
+launches a game. If the handheld is powered off while a game is running and
+OnionOS resumes that game on the next boot, leaving GameSwitcher returns to
+CartOS instead of the OnionOS launcher. This requires the optional CartOS
+startup hook. Existing users must replace both `App/CartOS` and
+`.tmp_update/startup/CartOS.sh` with the files from the updated release. Start
+the handheld once to update OnionOS's runtime hook, then restart once more to
+load the change. See [`INSTALL.txt`](INSTALL.txt) for the update steps.
+
 CartOS is a cartridge-style game browser for OnionOS handhelds. The current
 release is version 0.1.25; CartOS has been tested on the Miyoo Mini V4.
 
@@ -37,8 +48,9 @@ optional boot and GameSwitcher integration, and uninstall instructions.
 
 The optional `Startup/CartOS.sh` hook enables CartOS boot start and return from
 GameSwitcher. `Return/Restore-OnionOS.sh` reverses the hook. Neither script is
-needed for a normal app installation. When updating, replace the installed
-startup hook too if you are updating from V0.1.21.
+needed for a normal app installation. When updating an installation that uses
+the optional hook, replace the installed startup hook with the version from
+the release.
 
 ## Current release
 
