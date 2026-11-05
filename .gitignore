@@ -28,3 +28,6 @@ Source/CartOS/dist/CartOS-0.1.18.zip
 Source/CartOS/dist/CartOS-0.1.19.zip
 Source/CartOS/dist/CartOS-0.1.20.zip
 Source/CartOS/dist/CartOS-0.1.21.zip
+
+# Retain the tested beta locally; distribute the stable 0.1.26 package.
+Releases/CartOS-0.1.26-Beta-1/

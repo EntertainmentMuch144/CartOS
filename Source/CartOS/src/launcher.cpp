@@ -481,7 +481,7 @@ void Launcher::discoverGames(){
     sdRoot_=sdRoot;
     systems_.clear();
     categories_.clear();
-    artworkDirectoryCache_.clear();
+    artworkIndexes_.clear();
     discoverSystems(sdRoot);
     loadSettings();
     int variant=0;
@@ -967,11 +967,12 @@ void Launcher::updateHeldScroll(Uint64 now){
     }
 }
 
-void Launcher::launchSelected(){
+void Launcher::launchSelected(bool quickLaunch){
     Category* category=currentCategory();
     if(!category || category->entries.empty()) return;
     const int selected=wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(category->entries.size()));
     Game& entry=category->entries[static_cast<size_t>(selected)];
+    if(quickLaunch && (menuButtonHeld_ || entry.kind!=EntryKind::Game || !regularFile(entry.romPath))) return;
     if(entry.cartLauncherSettings){
         settingsSelection_=0;
         settingsScrollOffset_=0;
@@ -980,6 +981,9 @@ void Launcher::launchSelected(){
     }
     if(entry.kind==EntryKind::Game){
         beginLaunchAnimation(categoryIndex_,static_cast<size_t>(selected));
+        // Use the double-A path: play the whole existing animation without
+        // pausing at step one or discovering unused gallery images.
+        launchStepTwoConfirmed_=quickLaunch;
         return;
     }
     launchGame(entry);
@@ -1020,6 +1024,23 @@ Game* Launcher::launchingGame(){
     return &categories_[launchAnimationCategory_].entries[launchAnimationEntry_];
 }
 
+artwork::Index& Launcher::artworkIndexFor(const SystemInfo& system,bool rebuild){
+    auto cached=artworkIndexes_.find(system.id);
+    if(cached!=artworkIndexes_.end() && !rebuild) return cached->second;
+    const Uint64 before=SDL_GetPerformanceCounter();
+    // Hex encoding keeps every system ID inside our app-owned cache folder.
+    std::string key;
+    static const char hex[]="0123456789abcdef";
+    for(unsigned char c:system.id){key.push_back(hex[c>>4]);key.push_back(hex[c&15]);}
+    artwork::Index& index=artworkIndexes_[system.id];
+    const bool ready=index.open(system.artworkPath+"/CartOS","cache/artwork/"+key+".idx",rebuild);
+    const double ms=1000.0*static_cast<double>(SDL_GetPerformanceCounter()-before)/SDL_GetPerformanceFrequency();
+    std::fprintf(stdout,"Artwork index [%s]: %s, %zu PNGs, %.2f ms\n",system.id.c_str(),
+                 !ready?"scan failed":(index.loadedFromDisk()?"loaded":"rebuilt"),index.fileCount(),ms);
+    std::fflush(stdout);
+    return index;
+}
+
 void Launcher::loadArtworkVariants(Game& game){
     if(game.kind!=EntryKind::Game) return;
     if(game.artVariants.empty()){
@@ -1058,74 +1079,7 @@ void Launcher::loadArtworkVariants(Game& game){
                     const std::string rootLabel=rootSlash==std::string::npos?romRoot:romRoot.substr(rootSlash+1);
                     relativeRomPath=rootLabel+"/"+relativeRomPath;
                 }
-                const size_t romSlash=relativeRomPath.find_last_of('/');
-                const std::string relativeDirectory=romSlash==std::string::npos?std::string():relativeRomPath.substr(0,romSlash);
-                const std::string romFilename=romSlash==std::string::npos?relativeRomPath:relativeRomPath.substr(romSlash+1);
-                const std::string romTitle=filenameWithoutExtension(romFilename);
-                const std::string variantsDirectory=system->artworkPath+"/CartOS"+
-                    (relativeDirectory.empty()?std::string():"/"+relativeDirectory);
-                const std::string legacyDirectory=system->artworkPath+"/CartOS/"+relativeRomPath;
-                std::vector<std::string> additionalImages;
-                auto scanArtworkDirectory=[&](const std::string& directory,bool flatNames){
-                    auto cached=artworkDirectoryCache_.find(directory);
-                    if(cached==artworkDirectoryCache_.end()){
-                        std::vector<std::string> imageNames;
-                        DIR* handle=opendir(directory.c_str());
-                        if(handle){
-                            while(dirent* entry=readdir(handle)){
-                                const std::string name=entry->d_name;
-                                if(name.empty() || name[0]=='.' || name.size()<5 ||
-                                   lower(name.substr(name.size()-4))!=".png") continue;
-                                if(regularFile(directory+"/"+name)) imageNames.push_back(name);
-                            }
-                            closedir(handle);
-                        }
-                        std::sort(imageNames.begin(),imageNames.end(),[](const std::string& a,const std::string& b){
-                            return lower(a)<lower(b);
-                        });
-                        cached=artworkDirectoryCache_.emplace(directory,std::move(imageNames)).first;
-                    }
-                    const std::string expectedPrefix=lower(romTitle+" - ");
-                    const std::string expectedSingleImage=lower(romTitle+".png");
-                    auto appendImage=[&](const std::string& name){
-                        const std::string image=directory+"/"+name;
-                        if(std::find(game.artVariants.begin(),game.artVariants.end(),image)==game.artVariants.end() &&
-                           std::find(additionalImages.begin(),additionalImages.end(),image)==additionalImages.end())
-                            additionalImages.push_back(image);
-                    };
-                    if(flatNames){
-                        // The CartOS artwork directory can contain hundreds or
-                        // thousands of images. Use the sorted cache to find
-                        // this ROM's names directly instead of rescanning the
-                        // entire directory for every game during startup.
-                        auto exact=std::lower_bound(cached->second.begin(),cached->second.end(),expectedSingleImage,
-                            [](const std::string& name,const std::string& value){return lower(name)<value;});
-                        for(;exact!=cached->second.end() && lower(*exact)==expectedSingleImage;++exact)
-                            appendImage(*exact);
-                        auto view=std::lower_bound(cached->second.begin(),cached->second.end(),expectedPrefix,
-                            [](const std::string& name,const std::string& value){return lower(name)<value;});
-                        for(;view!=cached->second.end();++view){
-                            const std::string comparableName=lower(*view);
-                            if(comparableName.compare(0,expectedPrefix.size(),expectedPrefix)!=0) break;
-                            if(comparableName.size()>expectedPrefix.size()+4)
-                                appendImage(*view);
-                        }
-                    }else{
-                        for(const std::string& name:cached->second) appendImage(name);
-                    }
-                };
-                // Flat names make it quick to add many views for a game, while
-                // still accepting the earlier per-ROM directory layout.
-                scanArtworkDirectory(variantsDirectory,true);
-                scanArtworkDirectory(legacyDirectory,false);
-                std::sort(additionalImages.begin(),additionalImages.end(),[&romTitle](const std::string& a,const std::string& b){
-                    const std::string aName=lower(a.substr(a.find_last_of('/')+1));
-                    const std::string bName=lower(b.substr(b.find_last_of('/')+1));
-                    const bool aSingleImage=aName==lower(romTitle+".png");
-                    const bool bSingleImage=bName==lower(romTitle+".png");
-                    if(aSingleImage!=bSingleImage) return aSingleImage;
-                    return aName==bName?lower(a)<lower(b):aName<bName;
-                });
+                const auto additionalImages=artworkIndexFor(*system).images(relativeRomPath);
                 for(const std::string& image:additionalImages){
                     if(game.artVariants.size()>=20) break;
                     game.artVariants.push_back(image);
@@ -1932,6 +1886,8 @@ void Launcher::refreshAll(){
     categoryIndex_=0;
     position_=target_=0.0f;
     discoverGames();
+    // X explicitly rebuilds every active system, even indexes not opened yet.
+    for(const SystemInfo& system:systems_) artworkIndexFor(system,true);
     reloadBackgroundChoices();
     for(size_t c=0;c<categories_.size();++c){
         if(categories_[c].label!=priorCategory) continue;
@@ -2418,7 +2374,8 @@ void Launcher::handle(const SDL_Event& e){
             case SDLK_PAGEUP: skipLetter(-1); break;
             case SDLK_PAGEDOWN: skipLetter(1); break;
 #endif
-            case SDLK_RETURN: case SDLK_SPACE: case SDLK_LALT: launchSelected(); break;
+            case SDLK_RETURN: launchSelected(true); break;
+            case SDLK_SPACE: case SDLK_LALT: launchSelected(); break;
             case SDLK_RSHIFT: openSelectMenu(); break;
             case SDLK_TAB:
 #if defined(LAUNCHER_DEVICE)
@@ -2448,6 +2405,7 @@ void Launcher::handle(const SDL_Event& e){
             case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: skipLetter(-1); break;
             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: skipLetter(1); break;
             case SDL_CONTROLLER_BUTTON_A: launchSelected(); break;
+            case SDL_CONTROLLER_BUTTON_START: launchSelected(true); break;
             case SDL_CONTROLLER_BUTTON_B: break;
             case SDL_CONTROLLER_BUTTON_BACK: openSelectMenu(); break;
             case SDL_CONTROLLER_BUTTON_Y: startSearch(); break;
@@ -2469,6 +2427,7 @@ void Launcher::handle(const SDL_Event& e){
             case 2: setScrollHeld(0,true); break;
             case 3: setScrollHeld(1,true); break;
             case 4: launchSelected(); break;
+            case 13: launchSelected(true); break; // MMIYOO_BUTTON_START
             case 5: break;
             case 7: startSearch(); break;
             case 6: refreshAll(); break;

@@ -1,4 +1,4 @@
-CartOS 0.1.25 — Installation Guide
+CartOS 0.1.26 — Installation Guide
 
 CartOS is a cartridge-style game browser for OnionOS handhelds. This release
 has been tested on the Miyoo Mini V4.
@@ -7,6 +7,35 @@ The ZIP includes the ready-to-use CartOS app, source code, and license notices.
 You only need the App/CartOS folder for a normal installation. The optional
 CartOS boot-and-GameSwitcher hook is in Startup/CartOS.sh. A separate restore
 script is in Return/Restore-OnionOS.sh.
+
+========================================================
+START QUICK LAUNCH
+========================================================
+
+In the main cartridge browser, press START once to play the normal cartridge
+launch animation and start the highlighted game. A still opens the enlarged
+preview; A again launches, and B goes back. Double-tap A still launches
+without waiting in the preview. START keeps its usual function inside menus
+and search, and does not open apps or settings from the browser.
+
+========================================================
+PERSISTENT EXTRA-IMAGE INDEX
+========================================================
+
+CartOS now saves an index of additional PNG filenames in App/CartOS/cache/artwork.
+The first preview for a system builds its index if needed. Later sessions use
+the saved index, so they do not scan that system's artwork folders again.
+Images still load one at a time as you browse them. Keep using the existing
+Imgs/CartOS artwork layout described below.
+
+After adding, removing, or renaming artwork, press X in CartOS. The existing
+refresh now rebuilds the extra-image indexes for all active systems too.
+A large library may take a moment on its first index build or during X refresh.
+The cache can be omitted when updating or deleted with CartOS closed; missing
+or invalid indexes are rebuilt automatically. It contains filenames only.
+A card that cannot save the index uses it for the current session and must
+scan again on the next session. See TESTING.md for validation notes and
+diagnostic timing information.
 
 ========================================================
 BEFORE YOU START
@@ -82,11 +111,15 @@ longer needed.
 Your OnionOS ROMs, saves, and collections are stored separately from the
 CartOS app folder.
 
-If you are updating from v0.1.21, replace .tmp_update/startup/CartOS.sh with
-the Startup/CartOS.sh included in this release. The hook is stored outside
-App/CartOS, so updating the app folder alone does not update GameSwitcher
-return and startup-animation behaviour. Show hidden files must be enabled to
-open .tmp_update; see SHOW HIDDEN FILES below.
+The optional Startup/CartOS.sh and Return/Restore-OnionOS.sh are unchanged
+from v0.1.25. If you already use that working hook, no script update is needed.
+When updating from an earlier hook, replace .tmp_update/startup/CartOS.sh with
+the Startup/CartOS.sh included in this release. That script
+adds the power-off game-resume fix and upgrades the existing runtime hook in
+place. The hook is stored outside App/CartOS, so updating the app folder alone
+is not enough. After replacing the script, start the handheld once so it can
+update the runtime hook, then restart once more to load that change. Show
+hidden files must be enabled to open .tmp_update; see SHOW HIDDEN FILES below.
 
 ========================================================
 CUSTOM BACKGROUNDS
@@ -184,7 +217,8 @@ While the cartridge is enlarged in the first launch step, press Left or Right
 to browse images. This changes the artwork in CartOS only; OnionOS's image is
 not changed, and the selection is not saved as the default. Press A to
 continue to launch, or B to return to the game list. Double-tap A from a game
-list to launch directly without stopping at the image preview.
+list to launch directly without stopping at the image preview. In the main
+browser, START also launches in one press using the same animation.
 
 In alphabetized system ROM lists, press L or R to jump to the previous or next
 starting-letter group. This shortcut is not active in Recent, Favourite, or

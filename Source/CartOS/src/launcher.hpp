@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL.h>
+#include "artwork_index.hpp"
 #include <array>
 #include <string>
 #include <unordered_map>
@@ -79,13 +80,14 @@ private:
     void applyListOrder();
     void saveListOrder();
     void moveList(int direction);
-    void launchSelected();
+    void launchSelected(bool quickLaunch = false);
     void beginLaunchAnimation(size_t categoryIndex, size_t entryIndex);
     Game* launchingGame();
     void browsePreviewPage(int direction);
     void selectPreviewArtwork(size_t selection);
     void resetPreviewArtwork();
     void loadArtworkVariants(Game& game);
+    artwork::Index& artworkIndexFor(const SystemInfo& system, bool rebuild = false);
     void drawPreviewGameDetails(const Game& game);
     void launchGame(const Game& game);
     void openOnionGameSwitcher();
@@ -133,7 +135,7 @@ private:
     std::vector<SystemInfo> systems_;
     std::vector<int> rememberedSelections_;
     std::vector<std::string> listOrder_;
-    std::unordered_map<std::string,std::vector<std::string>> artworkDirectoryCache_;
+    std::unordered_map<std::string,artwork::Index> artworkIndexes_;
     std::string sdRoot_;
     std::string playtimeLookupRom_;
     long long playtimeLookupSeconds_=-1;

@@ -1,15 +1,27 @@
-# CartOS source
+# CartOS v0.1.26
 
-CartOS is a cartridge-style game browser for OnionOS handhelds. Version 0.1.25 has been tested on the Miyoo Mini V4.
+CartOS is a cartridge-style game browser for OnionOS handhelds. Version 0.1.26 has been tested on the Miyoo Mini V4.
+
+## Version 0.1.26
+
+- Persist extra-image filename indexes in `App/CartOS/cache/artwork` between sessions.
+- Use direct indexed lookups when opening a gallery; decode only the displayed PNG.
+- Rebuild all active artwork indexes with the existing X refresh.
+- Press START on a game in the main browser to run the existing launch animation
+  without waiting for a second A press. Contextual START controls are preserved.
+
+The first preview for a system builds a missing or corrupt index. Adding or
+removing artwork requires X refresh. Index build/load timings are printed to standard output.
+See `TESTING.md` for validation notes and optional regression checks.
 
 ## Features
 
 - Browse multiple PNG artwork images for a game during the enlarged launch preview.
-- Search for a game's extra images only when its enlarged preview opens, including when the game is opened from Recent, Favourite, or a custom list.
+- Look up a game's extra images only when its enlarged preview opens, including when the game is opened from Recent, Favourite, or a custom list.
 - Keep the normal OnionOS artwork first, then show CartOS alternatives. A single extra image can use the plain ROM title, such as `Pokemon Emerald.png`; additional views can use labelled names such as `Pokemon Emerald - Gameplay.png` in `Imgs/CartOS`. The earlier per-ROM folder layout still works.
 - Press Left/Right to browse the artwork and then a Game Details page with the title, system, playtime, and ROM filename. A continues launching, and B returns to the centered game list.
 - Always use the main cartridge image for the launch animation, including when A is pressed from an alternate image or Game Details. Extra-art discovery is indexed to avoid scanning the full artwork folder for every ROM during startup.
-- Keep the two-step launch preview enabled; double-tap A from the game list to launch directly.
+- Keep the two-step launch preview enabled; press START or double-tap A from the game list to launch directly with the normal animation.
 - Save the GameSwitcher return request on the SD card when launching a game, so a game resumed after a power-off can still return to CartOS.
 - Use L/R shoulder buttons for immediate jumps between starting letters in alphabetized system ROM lists. Recent, Favourite, and custom lists keep normal scrolling.
 - Reorder lists from the Select menu or by editing the numbered `list_order_`

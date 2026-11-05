@@ -2,6 +2,24 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.26 — Faster artwork loading and START quick launch
+
+- Save a lightweight extra-artwork filename index for each system between
+  sessions. Enlarged previews use the saved index instead of rescanning the
+  artwork folders; images continue to load on demand.
+- Extend X refresh to rebuild the artwork indexes and clear cached artwork,
+  making added, removed, or renamed images available after refreshing.
+- Rebuild missing, incompatible, or corrupt indexes automatically. The first
+  index build and X refresh still scan artwork filenames.
+- Press START on a valid ROM in the main browser to play the existing launch
+  animation and launch through OnionOS without pausing for a second A press.
+- Preserve A's enlarged preview, double-tap A, B's return animation, image
+  ordering, and START's contextual functions in menus and search.
+- Keep the existing v0.1.25 boot and GameSwitcher hooks; no hook update is
+  needed when upgrading from a working v0.1.25 installation.
+
+Tested on the Miyoo Mini V4. See INSTALL.txt for updating and artwork refresh.
+
 ## 0.1.25 — Navigation, list ordering, and settings
 
 - Fix returning to CartOS from GameSwitcher after a game resumes from a power-off by preserving the game-session marker on the SD card; update the startup hook in place and clear the marker after CartOS is queued.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(CartOS VERSION 0.1.25 LANGUAGES CXX)
+project(CartOS VERSION 0.1.26 LANGUAGES CXX)
 
 option(CARTOS_BETA_BUILD "Append Beta to the displayed CartOS version" OFF)
 if(CARTOS_BETA_BUILD)
@@ -67,6 +67,7 @@ add_executable(cartos
     src/main.cpp
     src/launcher.cpp
     src/artwork.cpp
+    src/artwork_index.cpp
     src/draw.cpp
 )
 target_include_directories(cartos PRIVATE src)
