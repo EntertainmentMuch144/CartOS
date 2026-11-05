@@ -1,3 +1,0 @@
-The bundled Miyoo SDL2 runtime was built from the public source revision listed in BUILD-INFO.txt.
-The source repository contains the matching backend code and GPL license:
-https://github.com/XK9274/sdl2_miyoo/tree/178fc0fcfbdc8a92fbac16171fe945eb66d8f7d5

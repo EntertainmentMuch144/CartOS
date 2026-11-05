@@ -1,4 +1,0 @@
-CartOS version: 0.1.25 Beta
-Miyoo SDL2 backend source: https://github.com/XK9274/sdl2_miyoo
-Miyoo SDL2 backend revision: 178fc0fcfbdc8a92fbac16171fe945eb66d8f7d5
-The matching backend source is available at the pinned public source revision.
