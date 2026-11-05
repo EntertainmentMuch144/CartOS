@@ -166,6 +166,9 @@ private:
     std::string searchQuery_;
     std::vector<std::pair<size_t,size_t>> searchResults_;
     int searchResultSelection_=0;
+    bool selectButtonHeld_=false;
+    bool selectButtonChord_=false;
+    bool selectOptionsPending_=false;
     bool menuButtonHeld_=false;
     bool menuButtonChord_=false;
     bool launchAnimation_=false;

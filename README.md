@@ -17,6 +17,8 @@ for v0.1.26. See [`INSTALL.txt`](INSTALL.txt) for the update steps.
 
 - Press START once or double-tap A to launch the selected game with the
   cartridge animation. Press A once to open the artwork preview first.
+- Opens options when SELECT is released alone, while SELECT combinations
+  leave OnionOS brightness shortcuts available without browser actions.
 - Finds configured game systems that contain ROMs and displays their cartridge
   artwork.
 - Browses Recent, Favourite, and custom game lists, with search and game details.

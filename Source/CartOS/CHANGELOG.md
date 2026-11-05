@@ -4,6 +4,9 @@ Changes are listed newest first. Each entry describes the user-visible changes a
 
 ## 0.1.26 — Faster artwork loading and START quick launch
 
+- Open browser options when SELECT is released alone. SELECT combinations
+  suppress CartOS actions so OnionOS brightness shortcuts do not also open
+  options or move through the browser.
 - Save a lightweight extra-artwork filename index for each system between
   sessions. Enlarged previews use the saved index instead of rescanning the
   artwork folders; images continue to load on demand.

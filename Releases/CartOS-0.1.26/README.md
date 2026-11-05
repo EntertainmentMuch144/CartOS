@@ -4,6 +4,8 @@ CartOS is a cartridge-style game browser for OnionOS handhelds. Version 0.1.26 h
 
 ## Version 0.1.26
 
+- Release SELECT alone for options; hold SELECT with another button for
+  OnionOS shortcuts without triggering browser actions.
 - Persist extra-image filename indexes in `App/CartOS/cache/artwork` between sessions.
 - Use direct indexed lookups when opening a gallery; decode only the displayed PNG.
 - Rebuild all active artwork indexes with the existing X refresh.

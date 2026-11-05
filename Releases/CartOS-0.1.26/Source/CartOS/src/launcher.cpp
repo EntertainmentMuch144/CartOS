@@ -2145,6 +2145,49 @@ void Launcher::handle(const SDL_Event& e){
             default: break;
         }
     }
+    // SELECT is also OnionOS's brightness modifier. Wait for its release
+    // before opening browser options, and consume CartOS actions in a chord.
+    // keymon reads the physical buttons separately and still sees the shortcut.
+    if(e.type==SDL_WINDOWEVENT && e.window.event==SDL_WINDOWEVENT_FOCUS_LOST){
+        selectButtonHeld_=selectButtonChord_=selectOptionsPending_=false;
+    }
+    const bool selectKey=(e.type==SDL_KEYDOWN || e.type==SDL_KEYUP) &&
+        (e.key.keysym.sym==SDLK_RSHIFT || e.key.keysym.sym==SDLK_RCTRL);
+    const bool selectController=(e.type==SDL_CONTROLLERBUTTONDOWN || e.type==SDL_CONTROLLERBUTTONUP) &&
+        e.cbutton.button==SDL_CONTROLLER_BUTTON_BACK;
+    const bool selectJoystick=!controller_ &&
+        (e.type==SDL_JOYBUTTONDOWN || e.type==SDL_JOYBUTTONUP) &&
+        e.jbutton.button==12; // MMIYOO_BUTTON_SELECT in the bundled SDL backend
+    const bool buttonDown=e.type==SDL_KEYDOWN || e.type==SDL_CONTROLLERBUTTONDOWN ||
+        (e.type==SDL_JOYBUTTONDOWN && !controller_);
+    if(selectKey || selectController || selectJoystick){
+        if(buttonDown){
+            if(!selectButtonHeld_){
+                selectButtonHeld_=true;
+                selectButtonChord_=menuButtonHeld_;
+                selectOptionsPending_=overlay_==Overlay::None && !launchAnimation_;
+                scrollHeld_.fill(false);
+                if(menuButtonHeld_) menuButtonChord_=true;
+            }
+            // Preserve SELECT's existing contextual action in search/menus.
+            if(selectOptionsPending_ || launchAnimation_) return;
+        }else{
+            const bool showOptions=selectButtonHeld_ && selectOptionsPending_ && !selectButtonChord_ &&
+                overlay_==Overlay::None && !launchAnimation_;
+            selectButtonHeld_=selectButtonChord_=selectOptionsPending_=false;
+            if(showOptions) openSelectMenu();
+            return;
+        }
+    }else if(selectButtonHeld_){
+        const bool movedAxis=(e.type==SDL_CONTROLLERAXISMOTION && std::abs(e.caxis.value)>8000) ||
+            (e.type==SDL_JOYAXISMOTION && !controller_ && std::abs(e.jaxis.value)>8000);
+        const bool movedHat=e.type==SDL_JOYHATMOTION && !controller_ && e.jhat.value!=SDL_HAT_CENTERED;
+        if(buttonDown || movedAxis || movedHat){
+            selectButtonChord_=true;
+            return;
+        }
+        if(e.type==SDL_TEXTINPUT) return;
+    }
     if(launchAnimation_){
         const bool confirmPressed=(e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_A) ||
             (e.type==SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym==SDLK_RETURN || e.key.keysym.sym==SDLK_SPACE));
@@ -2376,7 +2419,7 @@ void Launcher::handle(const SDL_Event& e){
 #endif
             case SDLK_RETURN: launchSelected(true); break;
             case SDLK_SPACE: case SDLK_LALT: launchSelected(); break;
-            case SDLK_RSHIFT: openSelectMenu(); break;
+
             case SDLK_TAB:
 #if defined(LAUNCHER_DEVICE)
                 skipLetter(-1);
@@ -2407,7 +2450,7 @@ void Launcher::handle(const SDL_Event& e){
             case SDL_CONTROLLER_BUTTON_A: launchSelected(); break;
             case SDL_CONTROLLER_BUTTON_START: launchSelected(true); break;
             case SDL_CONTROLLER_BUTTON_B: break;
-            case SDL_CONTROLLER_BUTTON_BACK: openSelectMenu(); break;
+
             case SDL_CONTROLLER_BUTTON_Y: startSearch(); break;
             case SDL_CONTROLLER_BUTTON_X: refreshAll(); break;
             default: break;
@@ -2431,7 +2474,7 @@ void Launcher::handle(const SDL_Event& e){
             case 5: break;
             case 7: startSearch(); break;
             case 6: refreshAll(); break;
-            case 10: openSelectMenu(); break;
+
             default: break;
         }
 #else

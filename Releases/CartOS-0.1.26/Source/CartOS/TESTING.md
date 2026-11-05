@@ -4,7 +4,8 @@ Version: `0.1.26`. Based on v0.1.25 and the tested v0.1.26 Beta 1.
 
 The device owner reported that the beta works on the Miyoo Mini V4 and
 approved promotion to a stable release. The stable build uses the same
-launcher and artwork-index implementation with the release version label.
+artwork-index and launch implementation, plus SELECT release handling for
+OnionOS shortcut combinations.
 
 ## Completed on the development machine
 
@@ -29,6 +30,15 @@ launcher and artwork-index implementation with the release version label.
   do not accidentally trigger the new browser quick launch.
 - Verified that the renderer, animation update loop, game-launch function,
   app launch script, runtime libraries, and startup/return hooks match v0.1.25.
+
+## SELECT shortcut update
+
+Automated input checks cover SELECT down/release and repeat events, L2/R2
+trigger combinations, keyboard aliases, raw Miyoo buttons, suppression of
+A/START/navigation during a chord, contextual search behaviour, and recovery
+after focus loss. Actual brightness adjustment is handled by OnionOS keymon
+and should be checked on the handheld: tap SELECT alone for options, then
+hold SELECT and tap each trigger to adjust brightness without opening options.
 
 ## Optional handheld regression checks
 

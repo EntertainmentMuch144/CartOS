@@ -19,6 +19,16 @@ without waiting in the preview. START keeps its usual function inside menus
 and search, and does not open apps or settings from the browser.
 
 ========================================================
+SELECT AND ONIONOS SHORTCUTS
+========================================================
+
+Press and release SELECT by itself to open the browser's options menu.
+To use an OnionOS SELECT shortcut, hold SELECT first, press the other button,
+then release SELECT. For example, on the Miyoo Mini V4, SELECT + L2/R2 adjusts
+brightness. CartOS suppresses its own actions during the combination and
+leaves the options menu closed. OnionOS still handles the shortcut itself.
+
+========================================================
 PERSISTENT EXTRA-IMAGE INDEX
 ========================================================
 

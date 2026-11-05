@@ -20,6 +20,78 @@ namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 static void touch(const fs::path& path) { fs::create_directories(path.parent_path()); std::ofstream(path).put('x'); }
 static SDL_Event button(Uint8 value) { SDL_Event e{}; e.type=SDL_CONTROLLERBUTTONDOWN; e.cbutton.button=value; return e; }
+static SDL_Event released(Uint8 value) { SDL_Event e=button(value); e.type=SDL_CONTROLLERBUTTONUP; return e; }
+static SDL_Event key(SDL_Keycode value,bool down=true,bool repeat=false) {
+    SDL_Event e{}; e.type=down?SDL_KEYDOWN:SDL_KEYUP; e.key.keysym.sym=value; e.key.repeat=repeat; return e;
+}
+static SDL_Event rawButton(Uint8 value,bool down=true) {
+    SDL_Event e{}; e.type=down?SDL_JOYBUTTONDOWN:SDL_JOYBUTTONUP; e.jbutton.button=value; return e;
+}
+static void checkSelectShortcuts(const fs::path& base) {
+    Launcher input; input.sdRoot_=base.string();
+    Category category; Game game; game.title="Options test"; category.entries.push_back(game);
+    input.categories_.push_back(category);
+    const auto press=button(SDL_CONTROLLER_BUTTON_BACK), release=released(SDL_CONTROLLER_BUTTON_BACK);
+    input.handle(press); assert(input.overlay_==Launcher::Overlay::None);
+    input.handle(release); assert(input.overlay_==Launcher::Overlay::SelectMenu);
+    input.overlay_=Launcher::Overlay::None;
+    input.handle(release); assert(input.overlay_==Launcher::Overlay::None);
+    // Both trigger directions must cancel options, including neutral events
+    // before a trigger press and releasing SELECT before the trigger.
+    for(Uint8 trigger:{SDL_CONTROLLER_AXIS_TRIGGERLEFT,SDL_CONTROLLER_AXIS_TRIGGERRIGHT}) {
+        input.handle(press);
+        SDL_Event axis{}; axis.type=SDL_CONTROLLERAXISMOTION; axis.caxis.axis=trigger;
+        input.handle(axis); assert(!input.selectButtonChord_);
+        axis.caxis.value=32767; input.handle(axis); assert(input.selectButtonChord_);
+        axis.caxis.value=0; input.handle(axis); input.handle(release);
+        assert(input.overlay_==Launcher::Overlay::None && !input.launchAnimation_);
+    }
+    input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_A)); input.handle(release);
+    assert(input.overlay_==Launcher::Overlay::None && !input.launchAnimation_);
+    input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_START)); input.handle(release);
+    assert(input.overlay_==Launcher::Overlay::None && !input.launchAnimation_);
+    input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); input.handle(release);
+    assert(input.position_==0.0f && input.target_==0.0f && !input.scrollHeld_[1]);
+    assert(input.overlay_==Launcher::Overlay::None);
+    // Normal controller navigation still resumes after a chord.
+    input.handle(button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); assert(input.scrollHeld_[1]);
+    input.handle(released(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); assert(!input.scrollHeld_[1]);
+    for(SDL_Keycode select:{SDLK_RCTRL,SDLK_RSHIFT}) {
+        input.handle(key(select)); input.handle(key(select,true,true));
+        assert(input.overlay_==Launcher::Overlay::None);
+        input.handle(key(select,false)); assert(input.overlay_==Launcher::Overlay::SelectMenu);
+        input.overlay_=Launcher::Overlay::None;
+        for(SDL_Keycode trigger:{SDLK_TAB,SDLK_BACKSPACE}) {
+            input.handle(key(select)); input.handle(key(trigger)); input.handle(key(trigger,false));
+            input.handle(key(select,false)); assert(input.overlay_==Launcher::Overlay::None);
+            assert(input.running_ && !input.launchAnimation_);
+        }
+    }
+    input.handle(rawButton(12)); assert(input.overlay_==Launcher::Overlay::None);
+    input.handle(rawButton(12,false)); assert(input.overlay_==Launcher::Overlay::SelectMenu);
+    input.overlay_=Launcher::Overlay::None;
+    for(Uint8 trigger:{10,11}) {
+        input.handle(rawButton(12)); input.handle(rawButton(trigger)); input.handle(rawButton(trigger,false));
+        input.handle(rawButton(12,false)); assert(input.overlay_==Launcher::Overlay::None);
+    }
+    input.overlay_=Launcher::Overlay::Search;
+    input.handle(press); assert(input.overlay_==Launcher::Overlay::None); // contextual back retained
+    input.handle(release); assert(input.overlay_==Launcher::Overlay::None);
+    input.overlay_=Launcher::Overlay::Settings;
+    input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_DPAD_DOWN)); input.handle(release);
+    assert(input.overlay_==Launcher::Overlay::Settings && input.settingsSelection_==0);
+    input.overlay_=Launcher::Overlay::None;
+    input.launchAnimation_=true; input.launchAwaitingConfirm_=true;
+    input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_A)); input.handle(release);
+    assert(input.launchAwaitingConfirm_ && !input.launchStepTwoConfirmed_);
+    input.launchAnimation_=false; input.launchAwaitingConfirm_=false;
+    input.handle(press);
+    SDL_Event focus{}; focus.type=SDL_WINDOWEVENT; focus.window.event=SDL_WINDOWEVENT_FOCUS_LOST;
+    input.handle(focus); input.handle(release);
+    assert(!input.selectButtonHeld_ && input.overlay_==Launcher::Overlay::None);
+    input.handle(press); input.handle(release); assert(input.overlay_==Launcher::Overlay::SelectMenu);
+    std::cout<<"PASS SELECT release, L2/R2 chords, keyboard/raw/controller paths, context and focus recovery\n";
+}
 static std::vector<std::string> names(const std::vector<std::string>& paths) {
     std::vector<std::string> result;
     for(const auto& p:paths) result.push_back(fs::path(p).filename().string());
@@ -101,6 +173,7 @@ int main() {
     SystemInfo system; system.id="GB"; system.romPaths={(base/"GB").string()}; system.artworkPath=(base/"GB/Imgs").string();
     launcher.systems_.push_back(system);
     const fs::path prior=fs::current_path(); fs::current_path(base);
+    checkSelectShortcuts(base);
     launcher.handle(button(SDL_CONTROLLER_BUTTON_A));
     assert(launcher.launchAnimation_ && !launcher.launchStepTwoConfirmed_);
     const auto normalDuration=launcher.launchCenterDuration_;
