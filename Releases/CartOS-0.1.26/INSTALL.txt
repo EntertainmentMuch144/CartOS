@@ -9,45 +9,6 @@ CartOS boot-and-GameSwitcher hook is in Startup/CartOS.sh. A separate restore
 script is in Return/Restore-OnionOS.sh.
 
 ========================================================
-START QUICK LAUNCH
-========================================================
-
-In the main cartridge browser, press START once to play the normal cartridge
-launch animation and start the highlighted game. A still opens the enlarged
-preview; A again launches, and B goes back. Double-tap A still launches
-without waiting in the preview. START keeps its usual function inside menus
-and search, and does not open apps or settings from the browser.
-
-========================================================
-SELECT AND ONIONOS SHORTCUTS
-========================================================
-
-Press and release SELECT by itself to open the browser's options menu.
-To use an OnionOS SELECT shortcut, hold SELECT first, press the other button,
-then release SELECT. For example, on the Miyoo Mini V4, SELECT + L2/R2 adjusts
-brightness. CartOS suppresses its own actions during the combination and
-leaves the options menu closed. OnionOS still handles the shortcut itself.
-
-========================================================
-PERSISTENT EXTRA-IMAGE INDEX
-========================================================
-
-CartOS now saves an index of additional PNG filenames in App/CartOS/cache/artwork.
-The first preview for a system builds its index if needed. Later sessions use
-the saved index, so they do not scan that system's artwork folders again.
-Images still load one at a time as you browse them. Keep using the existing
-Imgs/CartOS artwork layout described below.
-
-After adding, removing, or renaming artwork, press X in CartOS. The existing
-refresh now rebuilds the extra-image indexes for all active systems too.
-A large library may take a moment on its first index build or during X refresh.
-The cache can be omitted when updating or deleted with CartOS closed; missing
-or invalid indexes are rebuilt automatically. It contains filenames only.
-A card that cannot save the index uses it for the current session and must
-scan again on the next session. See TESTING.md for validation notes and
-diagnostic timing information.
-
-========================================================
 BEFORE YOU START
 ========================================================
 
