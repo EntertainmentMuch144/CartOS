@@ -66,6 +66,14 @@ and X refresh still scan artwork filenames. Existing preview controls and
 OnionOS game launching are retained. See [`CHANGELOG.md`](CHANGELOG.md) for
 the full patch notes.
 
+## Optional v0.1.27 release
+
+The [v0.1.27 optional package](Releases/CartOS-0.1.27-Optional) adds Recent
+apps, accessibility settings, whole-device random game selection, and an
+optional setting to restore the browser position after leaving a game. The
+standard v0.1.26 download remains unchanged. Use the optional package's
+[installation guide](Releases/CartOS-0.1.27-Optional/INSTALL.txt) when trying it.
+
 ## Repository contents
 
 - `Releases/CartOS-0.1.26/App/CartOS/` — ready-to-copy OnionOS app for the

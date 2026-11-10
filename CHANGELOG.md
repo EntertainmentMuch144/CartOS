@@ -2,6 +2,14 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
+## 0.1.27 — Optional release
+
+- Add OnionOS apps to Recent alongside games, with the newest item first.
+- Add CartOS Accessibility, whole-device random game selection, and optional
+  browser-position restoration after leaving a game.
+- Smooth the enlarged-cartridge transition and keep the standard v0.1.26
+  download unchanged. See the [full optional release notes](Releases/CartOS-0.1.27-Optional/CHANGELOG.md).
+
 ## 0.1.26 — Faster artwork loading and START quick launch
 
 - Open browser options when SELECT is released alone. SELECT combinations

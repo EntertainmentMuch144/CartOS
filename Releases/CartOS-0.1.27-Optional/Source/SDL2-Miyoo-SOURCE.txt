@@ -1,0 +1,3 @@
+Matching source and build notes for the bundled Miyoo SDL2 runtime are included in Source/SDL2-Miyoo/.
+Source revision: 178fc0fcfbdc8a92fbac16171fe945eb66d8f7d5
+OSS audio is enabled for OnionOS libpadsp; see BUILD-NOTES.txt.
