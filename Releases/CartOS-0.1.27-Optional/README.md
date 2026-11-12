@@ -49,7 +49,7 @@ to the underlying system list; search text and artwork pages are not restored.
 
 Use the existing working v0.1.25/v0.1.26 boot-and-GameSwitcher hook. This
 optional release needs no hook changes. See `INSTALL.txt` for installation/rollback and
-`TESTING.md` for validation details. The standard v0.1.26 release is unchanged.
+
 
 ## Features
 

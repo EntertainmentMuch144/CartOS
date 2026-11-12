@@ -1,0 +1,6 @@
+CartOS version: 0.1.28
+Miyoo SDL2 backend source: https://github.com/XK9274/sdl2_miyoo
+Miyoo SDL2 backend revision: 178fc0fcfbdc8a92fbac16171fe945eb66d8f7d5
+SDL2 build option: OSS audio enabled for OnionOS libpadsp.
+SDL2 audio patch: virtual /dev/dsp enumeration (source included).
+Matching backend source and build notes: Source/SDL2-Miyoo/

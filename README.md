@@ -1,91 +1,102 @@
-# CartOS
-CartOS is a cartridge-style game browser for OnionOS handhelds. The current
-release is version 0.1.26; CartOS has been tested on the Miyoo Mini V4.
+# CartOS v0.1.28
 
-## RECENT BUG FIX
+CartOS is a cartridge-style game browser for OnionOS handhelds. This release
+includes the v0.1.27 Optional features and has been tested on the Miyoo Mini V4.
 
-Since v0.1.25, CartOS keeps the GameSwitcher return marker on the SD card when
-it launches a game. If the handheld is powered off while a game is running
-and OnionOS resumes that game on the next boot, leaving GameSwitcher returns
-to CartOS. This requires the optional CartOS startup hook. When upgrading from
-an earlier hook, replace both `App/CartOS` and `.tmp_update/startup/CartOS.sh`
-with the supplied files. Start the handheld once to update the runtime hook,
-then restart to load the change. A working v0.1.25 hook needs no replacement
-for v0.1.26. See [`INSTALL.txt`](INSTALL.txt) for the update steps.
+## Cached game catalog
+
+The first launch scans the ROM folders and saves a game catalog in
+`App/CartOS/cache/game-catalog-v1.txt`. Later launches read that catalog.
+Press **X** in CartOS to scan the ROM folders again and update the catalog
+after adding, removing, or renaming games. X also refreshes lists and artwork.
+If the catalog is missing or damaged, CartOS rebuilds it on launch. The catalog
+is disposable and contains no ROM or save data.
+
+On the tested Miyoo Mini V4, the cached launch initialized CartOS in 0.93
+seconds versus 1.15 seconds with a fresh scan. The change is too small to
+notice during a full device boot because OnionOS starts before CartOS.
+
+## Text background
+
+CartOS Settings includes an optional text background with a padded backing at
+90% opacity. With Invert text colour enabled, the backing switches from
+translucent black to translucent white so the darker text remains readable.
+This leaves the wallpaper and search keyboard panel unchanged.
+
+## Recent games and apps
+
+Apps opened from CartOS appear in Recent alongside games. Reopening an item
+moves it to the front. Select a recent app with A to open it again.
+
+## CartOS Accessibility
+
+Open **Apps > CartOS Accessibility** for four sections of persistent settings:
+visual accessibility, controls and navigation, display preferences, and audio
+and feedback. Includes text-size presets, high contrast, reduced motion,
+background dimming, safe button remapping, optional launch confirmation,
+larger artwork/controls, secondary-information hiding,
+scrolling speed, stronger selection, optional navigation sounds with separate
+volume, visual feedback, and capability-checked vibration.
+
+Defaults preserve normal browsing and START quick launch. Hold physical
+**SELECT and press START** to recover default controls. A confirmed reset
+restores only accessibility settings. See [ACCESSIBILITY.md](ACCESSIBILITY.md)
+for every option, defaults, control recovery and hardware-testing limits.
+
+## Random games from the whole device
+
+Select > Play random game now chooses from every discovered system library.
+Each unique ROM path has one equal chance, even when it appears in Recent,
+Favourite, custom lists, or more than one system configuration. Hidden
+systems are included; apps and utility entries are excluded. The selected
+game uses the existing enlarged preview and cartridge launch animation.
+
+## Remember your browser position
+
+Enable **Restore browser position** in CartOS settings to use this feature.
+It is **OFF by default** and is saved in `settings.ini`. Reset settings turns
+it off again. With it off, returning from a game opens Recent.
+
+When enabled, launching a game remembers the current list and ROM. When CartOS returns from
+GameSwitcher, the game is centred in that list in the normal browser. This
+also works when opening GameSwitcher directly from a game list.
+
+Ordinary cold starts open Recent. A missing game/list or hidden source system
+also falls back to Recent. The pending position survives a power-off while in
+a game and is consumed once when CartOS opens again. Search launches return
+to the underlying system list; search text and artwork pages are not restored.
+
+The existing v0.1.27 Optional boot-and-GameSwitcher hook works with this
+release; no hook update is needed. See `INSTALL.txt` for installation and
+rollback instructions.
 
 ## Features
 
-- Press START once or double-tap A to launch the selected game with the
-  cartridge animation. Press A once to open the artwork preview first.
-- Opens options when SELECT is released alone, while SELECT combinations
-  leave OnionOS brightness shortcuts available without browser actions.
-- Finds configured game systems that contain ROMs and displays their cartridge
-  artwork.
-- Browses Recent, Favourite, and custom game lists, with search and game details.
-- Previews a game's extra artwork and details in the enlarged view, including from Recent, Favourite, and custom lists.
-- Saves extra-artwork indexes between sessions for faster previews; X refresh
-  rebuilds them after artwork is added, removed, or renamed.
-- Searches with the on-screen keyboard, including spaces and punctuation.
-- Opens with a brief, configurable cartridge startup animation that can be skipped with input.
-- Shows playtime when Activity Tracker is installed, plus the handheld's
-  battery level.
-- Browses installed OnionOS apps and hands games and apps back to OnionOS to
-  launch.
-- Customizes the cartridge carousel, launch animation, game title, counters,
-  and control hints.
-- Chooses custom backgrounds such as `BG.png` and `BG_(Forest).png`, with text
-  options for light backgrounds.
-- Hides systems from the vertical browser list without removing their games.
-- Uses the shoulder buttons for immediate jumps between starting letters in
-  alphabetized system game lists. Recent, Favourite, and custom lists keep normal scrolling.
-- Reorders lists from the Select menu or by editing the numbered `list_order_`
-  entries in `App/CartOS/settings.ini`.
-- Keeps the general settings in a fixed order, with per-system options at the
-  bottom; game browsing wraps at the ends by default.
+- Browse multiple PNG artwork images for a game during the enlarged launch preview.
+- Look up a game's extra images only when its enlarged preview opens, including when the game is opened from Recent, Favourite, or a custom list.
+- Keep the normal OnionOS artwork first, then show CartOS alternatives. A single extra image can use the plain ROM title, such as `Pokemon Emerald.png`; additional views can use labelled names such as `Pokemon Emerald - Gameplay.png` in `Imgs/CartOS`. The earlier per-ROM folder layout still works.
+- Press Left/Right to browse the artwork and then a Game Details page with the title, system, playtime, and ROM filename. A continues launching, and B returns to the centered game list.
+- Always use the main cartridge image for the launch animation, including when A is pressed from an alternate image or Game Details. Extra-art discovery is indexed to avoid scanning the full artwork folder for every ROM during startup.
+- By default, use A for the two-step artwork preview, or press START / double-tap A from the game list to launch directly with the normal animation.
+- Save the GameSwitcher return request on the SD card when launching a game, so a game resumed after a power-off can still return to CartOS.
+- Use L/R shoulder buttons for immediate jumps between starting letters in alphabetized system ROM lists. Recent, Favourite, and custom lists keep normal scrolling.
+- Reorder lists from the Select menu or by editing the numbered `list_order_`
+  entries in `App/CartOS/settings.ini`. Older `list-order.txt` files are
+  imported automatically once.
+- Keep the settings menu in a predictable order, with per-system options at
+  the bottom and wraparound game browsing enabled by default.
+- Keep artwork browsing temporary to CartOS; OnionOS artwork is not modified, and there is no Y action to save a default image.
 
-## Install
+See the release `INSTALL.txt` for the alternate-image folder layout, installation steps, and startup-hook details.
 
-Download and extract `CartOS-0.1.26.zip` from
-[`Releases/CartOS-0.1.26`](Releases/CartOS-0.1.26). From the extracted folder,
-copy `App/CartOS` into the `App` folder on the OnionOS SD card. See
-[`INSTALL.txt`](INSTALL.txt) for installation, updating, custom backgrounds,
-optional boot and GameSwitcher integration, and uninstall instructions.
+## Source layout
 
-The optional `Startup/CartOS.sh` hook enables CartOS boot start and return from
-GameSwitcher. `Return/Restore-OnionOS.sh` reverses the hook. Neither script is
-needed for a normal app installation. When updating an installation that uses
-the optional hook, use the startup script supplied with the release. The
-working v0.1.25 hook also supports v0.1.26 and needs no repeat installation.
+- `src/` — launcher, input, artwork discovery, and rendering code.
+- `assets/` — interface artwork and font assets.
+- `scripts/` — source packaging and Miyoo build helpers.
+- `tools/` — toolchain support and asset-generation utilities.
+- `packaging/OnionOS/` — OnionOS packaging resources and optional startup hooks.
 
-## Current release
+CartOS Settings can hide a system from the vertical browser list without deleting its ROMs or removing games from search and saved lists. Backgrounds named `BG.png` or `BG_<name>.png` can be selected in settings. The browser also includes search, game details, playtime information, battery level, configurable cartridge sizing per system, and custom lists.
 
-CartOS 0.1.26 saves additional-artwork filename indexes between sessions and
-adds START quick launch from the main browser using the existing animation.
-Press X after changing artwork to rebuild the indexes. The first index build
-and X refresh still scan artwork filenames. Existing preview controls and
-OnionOS game launching are retained. See [`CHANGELOG.md`](CHANGELOG.md) for
-the full patch notes.
-
-## Optional v0.1.27 release
-
-The [v0.1.27 optional package](Releases/CartOS-0.1.27-Optional) adds Recent
-apps, accessibility settings, whole-device random game selection, and an
-optional setting to restore the browser position after leaving a game. The
-standard v0.1.26 download remains unchanged. Use the optional package's
-[installation guide](Releases/CartOS-0.1.27-Optional/INSTALL.txt) when trying it.
-
-## Repository contents
-
-- `Releases/CartOS-0.1.26/App/CartOS/` — ready-to-copy OnionOS app for the
-  current release.
-- `Source/CartOS/` — CartOS source code and packaging resources.
-- `Releases/` — versioned release ZIPs and extracted packages.
-- `Startup/CartOS.sh` — optional boot-start and GameSwitcher return hook.
-- `Return/Restore-OnionOS.sh` — script to reverse the optional hook.
-- `INSTALL.txt` — installation, update, background, and uninstall guide.
-- `BUILD-INFO.txt` — version and matching Miyoo SDL2 backend revision.
-- `LICENSE` and `THIRD-PARTY-NOTICES.md` — project and third-party license
-  information.
-
-
-This software was made with the use of ChatGPT Codex, it is all my idea and my feature choices, AI was just my coder.
+CartOS-authored code is covered by the MIT License. Third-party assets and libraries retain their own licenses; see `LICENSE` and `THIRD-PARTY-NOTICES.md`.

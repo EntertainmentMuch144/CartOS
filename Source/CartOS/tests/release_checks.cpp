@@ -49,7 +49,8 @@ static void checkSelectShortcuts(const fs::path& base) {
     input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_A)); input.handle(release);
     assert(input.overlay_==Launcher::Overlay::None && !input.launchAnimation_);
     input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_START)); input.handle(release);
-    assert(input.overlay_==Launcher::Overlay::None && !input.launchAnimation_);
+    assert(input.overlay_==Launcher::Overlay::Accessibility && !input.launchAnimation_);
+    input.overlay_=Launcher::Overlay::None;
     input.handle(press); input.handle(button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); input.handle(release);
     assert(input.position_==0.0f && input.target_==0.0f && !input.scrollHeld_[1]);
     assert(input.overlay_==Launcher::Overlay::None);
@@ -90,7 +91,150 @@ static void checkSelectShortcuts(const fs::path& base) {
     input.handle(focus); input.handle(release);
     assert(!input.selectButtonHeld_ && input.overlay_==Launcher::Overlay::None);
     input.handle(press); input.handle(release); assert(input.overlay_==Launcher::Overlay::SelectMenu);
+    input.overlay_=Launcher::Overlay::CreateList;
+    for(const auto& keyAndValue:std::array<std::pair<int,char>,3>{{{36,' '},{38,'\''},{39,'.'}}}){
+        input.virtualKey_=keyAndValue.first;
+        input.handle(button(SDL_CONTROLLER_BUTTON_A));
+        assert(input.newListName_.back()==keyAndValue.second);
+    }
+    input.overlay_=Launcher::Overlay::None;
     std::cout<<"PASS SELECT release, L2/R2 chords, keyboard/raw/controller paths, context and focus recovery\n";
+}
+static void checkSingleSearchResult() {
+    Launcher app;
+    app.overlay_=Launcher::Overlay::Search;
+    app.searchResultsFocused_=true;
+    app.searchResults_={{0,0}};
+    for(int n=0;n<50;++n){
+        app.handle(button(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+        app.handle(key(SDLK_RIGHT));
+        assert(app.searchResultSelection_==0);
+    }
+    app.searchResults_={{0,0},{0,1}};
+    app.handle(key(SDLK_LEFT));assert(app.searchResultSelection_==1);
+    app.handle(button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));assert(app.searchResultSelection_==0);
+    app.searchResults_.clear();
+    app.handle(key(SDLK_LEFT));assert(app.searchResultSelection_==0);
+    std::cout<<"PASS search results stay within bounds, including one or zero results\n";
+}
+static void checkSearchExit() {
+    Launcher app;
+    app.overlay_=Launcher::Overlay::Search;
+    app.searchQuery_="ALI";
+    app.handle(button(SDL_CONTROLLER_BUTTON_Y));
+    assert(app.overlay_==Launcher::Overlay::None && app.searchQuery_=="ALI");
+    app.overlay_=Launcher::Overlay::Search;
+    app.searchResultsFocused_=false;
+    app.handle(button(SDL_CONTROLLER_BUTTON_START));
+    assert(app.searchResultsFocused_);
+    app.handle(button(SDL_CONTROLLER_BUTTON_Y));
+    assert(app.overlay_==Launcher::Overlay::None);
+    for(bool focused:{false,true}){
+        app.overlay_=Launcher::Overlay::Search;
+        app.searchResultsFocused_=focused;
+        app.handle(rawButton(7));
+        assert(app.overlay_==Launcher::Overlay::None);
+    }
+    app.startSearch();
+    app.handle(key(SDLK_y));
+    SDL_Event typed{};typed.type=SDL_TEXTINPUT;typed.text.text[0]='y';
+    app.handle(typed);
+    assert(app.overlay_==Launcher::Overlay::Search && !app.searchResultsFocused_ && app.searchQuery_=="y");
+    std::cout<<"PASS Y exits either search view, START still focuses results, and keyboard Y types normally\n";
+}
+static void checkSearchRanking(const fs::path& base) {
+    const fs::path root=base/"search-ranking";
+    Launcher app;app.sdRoot_=root.string();
+    Category recent;recent.label="recent";
+    Category system;system.label="GB";
+    auto add=[&](Category& category,const std::string& title,const std::string& file,bool exists=true) {
+        Game game;game.title=title;game.romPath=(root/(file+".gb")).string();
+        if(exists) touch(game.romPath);
+        category.entries.push_back(game);
+    };
+    add(recent,"Calibrate","calibrate");
+    add(recent,"Super Alien","super-alien");
+    add(recent,"Alien Hominid","alien-hominid");
+    add(recent,"Calibrate Alien","calibrate-alien");
+    add(system,"Alien Hominid","alien-hominid");
+    add(system,"Alibi","alibi");
+    add(system,"Finality","finality");
+    add(system,"Missing Alien","missing-alien",false);
+    app.categories_={recent,system};
+    app.searchQuery_="ALI";app.searchResultSelection_=22;app.updateSearchResults();
+    std::vector<std::string> titles;
+    for(const auto ref:app.searchResults_) titles.push_back(app.categories_[ref.first].entries[ref.second].title);
+    assert((titles==std::vector<std::string>{"Alien Hominid","Alibi","Super Alien","Calibrate Alien","Calibrate","Finality"}));
+    assert(app.searchResultSelection_==0);
+    app.searchQuery_="alien h";app.updateSearchResults();
+    assert(app.searchResults_.size()==1 && app.searchResultSelection_==0);
+    app.searchQuery_="no match";app.updateSearchResults();
+    assert(app.searchResults_.empty() && app.searchResultSelection_==0);
+    std::cout<<"PASS search ranks title starts before word starts and substrings, deduplicates lists, and resets selection\n";
+}
+static void checkBrowserResume(const fs::path& base) {
+    Game first,second; first.title="First"; first.romPath=(base/"GB/First.gb").string();
+    second.title="Second"; second.romPath=(base/"GB/Second \"Special\".gb").string();
+    auto fixture=[&]() {
+        Launcher app; app.sdRoot_=base.string(); app.restoreBrowserPosition_=true;
+        for(const std::string& key:{"system:GB","recent","favourite","collection:Main \"Test\""}) {
+            Category category; category.orderKey=key;
+            if(key=="system:GB") category.systemId="GB";
+            category.entries={first,second}; app.categories_.push_back(category);
+        }
+        app.rememberedSelections_.assign(app.categories_.size(),0);
+        return app;
+    };
+    for(size_t origin:{0u,1u,2u,3u}) {
+        Launcher before=fixture(); const std::string key=before.categories_[origin].orderKey;
+        assert(before.saveBrowserState(origin,second.romPath));
+        assert(fs::exists(".browser-state") && !fs::exists(".browser-state.tmp"));
+        Launcher after=fixture();
+        std::reverse(after.categories_.begin(),after.categories_.end());
+        size_t expected=0;
+        for(size_t c=0;c<after.categories_.size();++c) {
+            if(after.categories_[c].orderKey==key) {
+                expected=c; after.categories_[c].entries.insert(after.categories_[c].entries.begin(),Game{});
+            }
+        }
+        after.restoreBrowserState(true);
+        assert(after.categoryIndex_==expected && after.position_==2.0f && after.target_==2.0f);
+        assert(after.rememberedSelections_[expected]==2);
+        assert(after.overlay_==Launcher::Overlay::None && !after.launchAnimation_);
+        assert(!fs::exists(".browser-state"));
+    }
+    Launcher app=fixture();
+    assert(app.saveBrowserState(0,second.romPath));
+    app.restoreBrowserState(false);
+    assert(app.categories_[app.categoryIndex_].orderKey=="recent" && app.position_==0.0f);
+    assert(!fs::exists(".browser-state"));
+    app.restoreBrowserState(true); assert(app.categories_[app.categoryIndex_].orderKey=="recent");
+    // Missing list, missing game, and hidden system all fall back to Recent.
+    for(int missing=0;missing<3;++missing) {
+        Launcher after=fixture(); assert(after.saveBrowserState(0,second.romPath));
+        if(missing==0) after.categories_[0].orderKey="system:NEW";
+        if(missing==1) after.categories_[0].entries.pop_back();
+        if(missing==2) after.hiddenSystemById_["GB"]=true;
+        after.restoreBrowserState(true);
+        assert(after.categories_[after.categoryIndex_].orderKey=="recent" && after.position_==0.0f);
+    }
+    // History aliases normalize to the same game after a resumed session.
+    app=fixture(); assert(app.saveBrowserState(0,"/mnt/SDCARD/GB/../GB/First.gb"));
+    app.restoreBrowserState(true); assert(app.categoryIndex_==0 && app.position_==0.0f);
+    const std::vector<std::string> invalid={"", "Not a CartOS snapshot", "CartOSBrowser1\n\"system:GB\"\n\"unfinished", std::string(16385,'x')};
+    for(const std::string& data:invalid) {
+        std::ofstream(".browser-state",std::ios::binary)<<data;
+        app=fixture(); app.restoreBrowserState(true);
+        assert(app.categories_[app.categoryIndex_].orderKey=="recent" && !fs::exists(".browser-state"));
+    }
+    app=fixture(); assert(app.saveBrowserState(0,first.romPath));
+    std::ofstream(".browser-state",std::ios::app)<<"unexpected trailing data";
+    app.restoreBrowserState(true); assert(app.categories_[app.categoryIndex_].orderKey=="recent");
+    assert(!app.saveBrowserState(999,first.romPath));
+    assert(!app.saveBrowserState(0,""));
+    fs::create_directory(".browser-state.tmp");
+    assert(!app.saveBrowserState(0,first.romPath)); fs::remove(".browser-state.tmp");
+    std::cout<<"PASS browser resume across system/Recent/Favourite/custom lists, reordering, cold starts, missing/hidden entries, corrupt state, write failure\n";
 }
 static std::vector<std::string> names(const std::vector<std::string>& paths) {
     std::vector<std::string> result;
@@ -102,6 +246,243 @@ static std::string contents(const fs::path& path) {
     return {std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
 }
 static void write(const fs::path& path,const std::string& data) { std::ofstream(path,std::ios::binary)<<data; }
+
+static void checkGameCatalogRefresh(const fs::path& base) {
+    const fs::path card=base/"catalog-fixture";
+    const fs::path config=card/"Emu/GB/config.json";
+    const fs::path first=card/"Roms/GB/First.gb";
+    const fs::path second=card/"Roms/GB/Second.gb";
+    const fs::path cache=card/"App/CartOS/cache/game-catalog-v1.txt";
+    touch(config); touch(card/"Emu/GB/launch.sh"); touch(first);
+    fs::create_directories(card/"App/CartOS");
+    write(config,R"({"label":"Game Boy","launch":"launch.sh","rompath":"../../Roms/GB","extlist":"gb","imgpath":"../../Roms/GB/Imgs"})");
+    auto countGames=[](const Launcher& launcher){
+        for(const Category& category:launcher.categories_)
+            if(category.orderKey=="system:GB") return category.entries.size();
+        return std::size_t{0};
+    };
+    Launcher cold; cold.sdRoot_=card.string(); cold.discoverGames();
+    assert(countGames(cold)==1 && fs::exists(cache));
+    touch(second);
+    touch(card/"Roms/GB/~Filter.gb");
+    const std::string utility=cold.systems_.front().romPaths.front()+"/~Filter.gb";
+    std::string cached=contents(cache);
+    const size_t count=cached.find("S \"GB\" 1\n");
+    assert(count!=std::string::npos);
+    cached.replace(count,std::string("S \"GB\" 1\n").size(),"S \"GB\" 2\n");
+    cached+="G \"~Filter\" \""+utility+"\" \"\"\n";
+    write(cache,cached);
+    Launcher warm; warm.sdRoot_=card.string(); warm.discoverGames();
+    assert(countGames(warm)==1 && warm.lastCatalogLoaded_); // Cache must not revive hidden utilities.
+    warm.refreshAll();
+    assert(countGames(warm)==2);
+    Launcher reloaded; reloaded.sdRoot_=card.string(); reloaded.discoverGames();
+    assert(countGames(reloaded)==2);
+    fs::remove(second);
+    reloaded.refreshAll();
+    assert(countGames(reloaded)==1);
+    write(cache,"damaged catalog\n");
+    Launcher repaired; repaired.sdRoot_=card.string(); repaired.discoverGames();
+    assert(countGames(repaired)==1 && contents(cache).find("CartOSGameCatalog1")==0);
+    fs::remove_all(card);
+}
+static void checkMixedRecent(const fs::path& base) {
+    const fs::path root=base/"mixed-recent";
+    const fs::path history=root/"Saves/CurrentProfile/lists/content_history.lpl";
+    const fs::path native=root/"Roms/recentlist.json";
+    const fs::path fileExplorer=root/"App/File Explorer";
+    const fs::path terminal=root/"App/Terminal";
+    for(const auto& path:{history,native,root/"Roms/GB/First.gb",root/"Roms/GB/Second.gb",
+                         root/"Roms/GB/Standalone.gb",root/"Roms/GB/Third.gb",root/"Emu/GB/launch.sh",
+                         fileExplorer/"launch.sh",fileExplorer/"icon.png",terminal/"launch.sh"})
+        touch(path);
+    fs::create_directories(root/"App/CartOS");
+    write(fileExplorer/"config.json",R"({"label":"File Explorer","icon":"icon.png"})");
+    write(terminal/"config.json",R"({"label":"Terminal","launch":"launch.sh"})");
+    const std::string first=R"({"path":"/mnt/SDCARD/Roms/GB/First.gb"})" "\n";
+    const std::string second=R"({"path":"/mnt/SDCARD/Roms/GB/Second.gb"})" "\n";
+    const std::string alias=R"({"path":"/mnt/SDCARD/Emu/GB/../../Roms/GB/First.gb"})" "\n";
+    const std::string third=R"({"path":"/mnt/SDCARD/Roms/GB/Third.gb"})" "\n";
+    const std::string nativeData=R"({"rompath":"/mnt/SDCARD/Roms/GB/First.gb","label":"First"})" "\n";
+    write(native,nativeData);
+    write(history,first+alias);
+    auto open=[&]() {
+        Launcher app;
+        app.sdRoot_=root.string();
+        SystemInfo system;
+        system.id=system.label="GB";
+        system.romPaths={(root/"Roms/GB").string()};
+        system.artworkPath=(root/"Roms/GB/Imgs").string();
+        system.launcherPath=(root/"Emu/GB/launch.sh").string();
+        system.extensions={".gb"};
+        app.systems_.push_back(system);
+        app.discoverRecent(app.sdRoot_);
+        app.discoverApps(app.sdRoot_);
+        app.mergeRecentHistory(app.categories_.front(),app.categories_.back());
+        return app;
+    };
+    auto titles=[](const Launcher& app) {
+        std::vector<std::string> result;
+        for(const auto& item:app.categories_.front().entries) result.push_back(item.title);
+        return result;
+    };
+    auto launchApp=[](Launcher& app,const std::string& title) {
+        for(const auto& item:app.categories_.back().entries){
+            if(item.title!=title) continue;
+            assert(app.rememberRecentLaunch(item));
+            return;
+        }
+        assert(false);
+    };
+    auto launchGame=[&](Launcher& app,const std::string& name) {
+        Game game;
+        game.romPath=(root/"Roms/GB"/(name+".gb")).string();
+        assert(app.rememberRecentLaunch(game));
+    };
+
+    Launcher app=open();
+    assert(titles(app)==std::vector<std::string>{"First"});
+    launchApp(app,"File Explorer");
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"File Explorer","First"}));
+    const Game& recentApp=app.categories_.front().entries.front();
+    assert(recentApp.kind==EntryKind::App && recentApp.artPath==(fileExplorer/"icon.png").string());
+    assert(recentApp.workingDirectory==fileExplorer.string());
+    assert(recentApp.launcherPath==(fileExplorer/"launch.sh").string());
+    launchGame(app,"Second");
+    write(history,second+first+alias); // RetroArch records a newly played ROM on exit.
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"Second","File Explorer","First"}));
+    launchApp(app,"Terminal");
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"Terminal","Second","File Explorer","First"}));
+    app.updateSearchResults();
+    assert((app.searchResults_==std::vector<std::pair<size_t,size_t>>{{0,1},{0,3}}));
+    assert(app.randomGameCandidates().empty());
+
+    launchApp(app,"File Explorer");
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"File Explorer","Terminal","Second","First"}));
+    launchGame(app,"Standalone");
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"Standalone","File Explorer","Terminal","Second","First"}));
+    launchApp(app,"Terminal");
+    write(history,first+third+second); // An external replay and a new game.
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"First","Third","Terminal","Standalone","File Explorer","Second"}));
+
+    launchApp(app,"Main UI");
+    launchApp(app,"CartOS settings");
+    assert(titles(open())==titles(app));
+    touch(fileExplorer/"new.sh");
+    write(fileExplorer/"config.json",R"({"label":"File Manager","launch":"new.sh"})");
+    fs::remove(terminal/"launch.sh");
+    fs::remove(root/"Roms/GB/Standalone.gb");
+    app=open();
+    assert((titles(app)==std::vector<std::string>{"First","Third","File Manager","Second"}));
+    assert(app.categories_.front().entries[2].launcherPath==(fileExplorer/"new.sh").string());
+    assert(contents(native)==nativeData && contents(history)==first+third+second);
+    std::cout<<"PASS mixed Recent order, deduplication, native history changes, standalone games, current app targets, removed items, and game-only search\n";
+}
+
+static void checkRestoreSetting(const fs::path& base) {
+    const fs::path prior=fs::current_path(), root=base/"restore-setting";
+    fs::create_directories(root/"App/CartOS"); fs::current_path(root);
+    const fs::path config=root/"App/CartOS/settings.ini";
+    auto fixture=[&]() {
+        Launcher app; app.sdRoot_=root.string();
+        Game game; game.romPath=(root/"Game.gb").string(); game.title="Game";
+        Category system; system.orderKey="system:GB"; system.systemId="GB"; system.entries.push_back(game);
+        Category recent; recent.orderKey="recent";
+        app.categories_={system,recent}; app.rememberedSelections_={0,0};
+        SystemInfo info; info.id="GB"; app.systems_.push_back(info);
+        return app;
+    };
+    Launcher app=fixture(); assert(!app.restoreBrowserPosition_);
+    assert(app.settingsRowCount()==14); // 12 general + 2 system controls.
+    assert(app.saveBrowserState(0,app.categories_[0].entries[0].romPath));
+    assert(!fs::exists(".browser-state"));
+    // Existing installations have no key: it must stay off, even on refresh.
+    write(config,"show_game_count=1\n"); app.restoreBrowserPosition_=true; app.loadSettings();
+    assert(!app.restoreBrowserPosition_);
+    app.showGameCount_=false; app.invertTextColour_=true;
+    app.cartridgeScaleBySystem_["GB"]=2;
+    app.loadSettings();
+    assert(app.showGameCount_ && !app.invertTextColour_ && app.cartridgeScaleFor("GB")==1);
+    app.overlay_=Launcher::Overlay::Settings; app.settingsSelection_=10;
+    app.handle(button(SDL_CONTROLLER_BUTTON_A));
+    assert(app.restoreBrowserPosition_ && contents(config).find("restore_browser_position=1\n")!=std::string::npos);
+    Launcher restarted=fixture(); restarted.loadSettings(); assert(restarted.restoreBrowserPosition_);
+    assert(restarted.saveBrowserState(0,restarted.categories_[0].entries[0].romPath));
+    restarted.restoreBrowserState(true); assert(restarted.categoryIndex_==0);
+    // Turning it off persists and removes an old pending position.
+    assert(app.saveBrowserState(0,app.categories_[0].entries[0].romPath));
+    assert(fs::exists(".browser-state"));
+    app.handle(button(SDL_CONTROLLER_BUTTON_A));
+    assert(!app.restoreBrowserPosition_ && !fs::exists(".browser-state"));
+    assert(contents(config).find("restore_browser_position=0\n")!=std::string::npos);
+    restarted=fixture(); restarted.loadSettings(); assert(!restarted.restoreBrowserPosition_);
+    // A leftover snapshot from the earlier always-on beta must not restore.
+    Launcher enabled=fixture(); enabled.restoreBrowserPosition_=true;
+    assert(enabled.saveBrowserState(0,enabled.categories_[0].entries[0].romPath));
+    restarted.restoreBrowserState(true);
+    assert(restarted.categoryIndex_==1 && !fs::exists(".browser-state"));
+    // Reset returns the new option to OFF and keeps per-system rows aligned.
+    app.restoreBrowserPosition_=true; app.settingsSelection_=11; app.changeSetting(1);
+    assert(!app.restoreBrowserPosition_);
+    app.settingsSelection_=12; app.changeSetting(1); assert(app.cartridgeScaleFor("GB")==2);
+    app.settingsSelection_=13; app.changeSetting(1); assert(app.systemHiddenFor("GB"));
+    app.moveSettingsSelection(1); assert(app.settingsSelection_==0);
+    write(config,"restore_browser_position=invalid\n");
+    app.restoreBrowserPosition_=true; app.loadSettings(); assert(!app.restoreBrowserPosition_);
+    fs::current_path(prior);
+    std::cout<<"PASS restore setting defaults OFF, toggles/persists, resets, ignores stale state, and preserves system rows\n";
+}
+static void checkWholeDeviceRandom(const fs::path& base) {
+    Launcher app; app.sdRoot_=base.string();
+    Game a,b,c; a.title="Alpha"; a.romPath=(base/"GB/Alpha.gb").string(); a.launcherPath="/Emu/GB/launch.sh";
+    b=a; b.title="Beta"; b.romPath=(base/"GB/Beta.gb").string();
+    c=a; c.title="Gamma"; c.romPath=(base/"GBA/Gamma.gba").string(); c.launcherPath="/Emu/GBA/launch.sh";
+    Game utility=a; utility.title="~Filter";
+    Game application=a; application.kind=EntryKind::App;
+    Game noRom=a; noRom.romPath.clear();
+    Game noLauncher=a; noLauncher.launcherPath.clear();
+    Category gb; gb.systemId="GB"; gb.orderKey="system:GB"; gb.entries={a,b,utility,application,noRom,noLauncher};
+    Category gba; gba.systemId="GBA"; gba.orderKey="system:GBA";
+    Game alias=a; alias.romPath="/mnt/SDCARD/GB/../GB/Alpha.gb";
+    gba.entries={c,alias};
+    Category recent; recent.orderKey="recent"; recent.entries.assign(10,a);
+    Category favourite; favourite.orderKey="favourite"; favourite.entries={b,c};
+    Category custom; custom.orderKey="collection:Main"; custom.entries={a,b,c};
+    Category apps; apps.orderKey="apps"; apps.entries={application};
+    app.categories_={recent,gb,gba,favourite,custom,apps};
+    app.hiddenSystemById_["GBA"]=true;
+    const auto pool=app.randomGameCandidates();
+    const std::vector<std::pair<size_t,size_t>> expected{{1,0},{1,1},{2,0}};
+    assert(pool==expected); // Both systems, including hidden; one entry per ROM.
+    app.categoryIndex_=4; assert(app.randomGameCandidates()==expected);
+    // Exercise the real menu action. Its only candidate lives outside the
+    // current saved list, so this test cannot pass with the former list-local code.
+    Launcher action; action.sdRoot_=base.string();
+    Category only; only.systemId="GBA"; only.orderKey="system:GBA"; only.entries={c};
+    action.categories_={custom,only}; action.categoryIndex_=0;
+    action.position_=action.target_=1.0f; action.rememberedSelections_={0,0};
+    action.menuOptions_={"Play random game"}; action.overlaySelection_=0;
+    action.overlay_=Launcher::Overlay::SelectMenu;
+    action.activateSelectMenu();
+    assert(action.categoryIndex_==1 && action.position_==0.0f && action.target_==0.0f);
+    assert(action.rememberedSelections_[0]==1 && action.rememberedSelections_[1]==0);
+    assert(action.launchAnimation_ && !action.launchStepTwoConfirmed_);
+    assert(action.launchAnimationCategory_==1 && action.launchAnimationEntry_==0);
+    assert(action.launchingGame()->romPath==c.romPath && action.overlay_==Launcher::Overlay::None);
+    assert(!action.restoreBrowserPosition_); // This option remains OFF by default.
+    Launcher empty; empty.categories_={apps,custom}; empty.categoryIndex_=1;
+    empty.overlay_=Launcher::Overlay::SelectMenu; empty.playRandomGame();
+    assert(!empty.launchAnimation_ && empty.statusMessage_=="No games available");
+    assert(empty.categoryIndex_==1 && empty.overlay_==Launcher::Overlay::None);
+    Launcher none; none.playRandomGame(); assert(!none.launchAnimation_ && none.statusMessage_=="No games available");
+    std::cout<<"PASS whole-device random pool, unique-ROM weighting, hidden systems, app/utility exclusion, menu animation, empty library\n";
+}
 int main() {
     char pattern[]="/tmp/cartos-release-check-XXXXXX";
     const char* temp=mkdtemp(pattern); assert(temp);
@@ -174,33 +555,43 @@ int main() {
     launcher.systems_.push_back(system);
     const fs::path prior=fs::current_path(); fs::current_path(base);
     checkSelectShortcuts(base);
+    checkSingleSearchResult();
+    checkSearchExit();
+    checkSearchRanking(base);
+    checkBrowserResume(base);
+    checkMixedRecent(base);
+    checkGameCatalogRefresh(base);
+    checkRestoreSetting(base);
+    checkWholeDeviceRandom(base);
     launcher.handle(button(SDL_CONTROLLER_BUTTON_A));
     assert(launcher.launchAnimation_ && !launcher.launchStepTwoConfirmed_);
-    const auto normalDuration=launcher.launchCenterDuration_;
+    assert(launcher.launchCenterDuration_==0.0f); // Already centred: no pre-growth pause.
     launcher.launchAwaitingConfirm_=true;
     launcher.handle(button(SDL_CONTROLLER_BUTTON_A));
     assert(launcher.launchStepTwoConfirmed_ && !launcher.launchAwaitingConfirm_);
     launcher.launchAnimation_=false; launcher.position_=0.25f;
     launcher.handle(button(SDL_CONTROLLER_BUTTON_START));
+    assert(!launcher.launchAnimation_);
+    launcher.handle(released(SDL_CONTROLLER_BUTTON_START));
     assert(launcher.launchAnimation_ && launcher.launchStepTwoConfirmed_);
-    assert(launcher.launchCenterDuration_==normalDuration && launcher.launchAnimationElapsed_==0.0f);
+    assert(launcher.launchCenterDuration_==0.16f && launcher.launchAnimationElapsed_==0.0f);
     assert(launcher.launchingGame()->romPath==game.romPath && launcher.artworkIndexes_.empty());
     launcher.launchAnimation_=false; launcher.overlay_=Launcher::Overlay::Search;
     launcher.handle(button(SDL_CONTROLLER_BUTTON_START));
     assert(launcher.searchResultsFocused_ && !launcher.launchAnimation_);
     launcher.overlay_=Launcher::Overlay::Settings;
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.overlay_=Launcher::Overlay::SelectMenu;
     launcher.menuOptions_={"Game details"};
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.overlay_=Launcher::Overlay::None;
     launcher.categories_[0].entries[0].kind=EntryKind::App;
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.categories_[0].entries[0].kind=EntryKind::Game;
     launcher.categories_[0].entries[0].romPath="/missing/rom.zip";
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.categories_[0].entries.clear();
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.categories_[0].entries.push_back(game);
     // Each saved-list copy and a normalized OnionOS history path gets the same gallery.
     for(int list=0;list<4;++list) {
@@ -221,7 +612,7 @@ int main() {
     assert(fs::path(multiGame.artVariants.back()).filename()=="Pokemon - Front.png");
     // A held Menu shortcut must not become a quick launch.
     launcher.menuButtonHeld_=true;
-    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
+    launcher.handle(button(SDL_CONTROLLER_BUTTON_START)); launcher.handle(released(SDL_CONTROLLER_BUTTON_START)); assert(!launcher.launchAnimation_);
     launcher.menuButtonHeld_=false;
     Launcher restarted; restarted.sdRoot_=base.string(); restarted.systems_.push_back(system);
     Game copy=game; restarted.loadArtworkVariants(copy);

@@ -72,7 +72,7 @@ It is consumed on return and does not need to be copied when updating.
 Missing or invalid state falls back to Recent. If saving the state fails,
 normal game launching continues and the previous position cannot be restored.
 
-See TESTING.md for validation details. To return to v0.1.26, shut down the
+To return to v0.1.26, shut down the
 handheld and put your saved stable App/CartOS folder back on the card.
 
 ========================================================
@@ -135,9 +135,7 @@ A large library may take a moment on its first index build or during X refresh.
 The cache can be omitted when updating or deleted with CartOS closed; missing
 or invalid indexes are rebuilt automatically. It contains filenames only.
 A card that cannot save the index uses it for the current session and must
-scan again on the next session. See TESTING.md for validation notes and
-diagnostic timing information.
-
+scan again on the next session.
 ========================================================
 BEFORE YOU START
 ========================================================

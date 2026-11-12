@@ -60,8 +60,12 @@ def main() -> None:
                         help="Git revision used to build the bundled Miyoo SDL2 runtime")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist",
                         help="folder in which to write the ZIP")
-    parser.add_argument("--beta", action="store_true",
+    parser.add_argument("--sdl-source-dir", type=Path, default=ROOT.parent / "SDL2-Miyoo",
+                        help="matching SDL source archive and build notes")
+    parser.add_argument("--beta", action="store_true", default=False,
                         help="label this package as a Beta build")
+    parser.add_argument("--optional", action="store_true",
+                        help="name this release separately from the standard download")
     args = parser.parse_args()
 
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -70,13 +74,15 @@ def main() -> None:
         raise SystemExit("Cannot determine CartOS version from CMakeLists.txt")
     version = version_match.group(1)
 
+    require_file(args.sdl_source_dir / "SDL2-Miyoo-source.tar.gz", "matching SDL2 source archive")
+    require_file(args.sdl_source_dir / "BUILD-NOTES.txt", "SDL2 build notes")
     app = args.app_dir.resolve()
     require_arm_elf(app / "bin/cartos", "CartOS launcher")
     require_arm_elf(app / "lib/libneonarmmiyoo.so", "CartOS SDL compatibility library")
     require_arm_elf(app / "lib/libSDL2-2.0.so.0", "Miyoo SDL2 runtime")
     for relative in (
         "config.json", "full_resolution", "launch.sh", "res/font_atlas.png",
-        "res/icon/cartos.png", "res/onionos_logo.png", "licenses/DejaVu-LICENSE.txt",
+        "res/icon/cartos.png", "res/icon/accessibility.png", "res/onionos_logo.png", "licenses/DejaVu-LICENSE.txt",
         "licenses/SDL2/LICENSE", "licenses/SDL2/LICENSE.txt",
     ):
         require_file(app / relative, relative)
@@ -90,8 +96,8 @@ def main() -> None:
     require_file(ROOT / "LICENSE", "CartOS source license")
     require_file(ROOT / "THIRD-PARTY-NOTICES.md", "third-party notices")
     require_file(CHANGELOG, "patch notes")
-    version_label = f"{version} Beta" if args.beta else version
-    package_name = f"CartOS-{version}" + ("-Beta" if args.beta else "")
+    version_label = f"{version} Optional Beta" if args.beta and args.optional else f"{version} Beta" if args.beta else version
+    package_name = f"CartOS-{version}" + ("-Optional" if args.optional else "") + ("-Beta" if args.beta else "")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     destination = args.output_dir / f"{package_name}.zip"
     with tempfile.NamedTemporaryFile(prefix=f".{package_name}-", suffix=".zip",
@@ -103,7 +109,7 @@ def main() -> None:
                              compresslevel=8) as archive:
             package_root = package_name
             add_tree(archive, app, f"{package_root}/App/CartOS")
-            for filename in ("INSTALL.txt", "README.md", "TESTING.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "CHANGELOG.md"):
+            for filename in ("INSTALL.txt", "README.md", "ACCESSIBILITY.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "CHANGELOG.md"):
                 archive.write(CHANGELOG if filename == "CHANGELOG.md" else ROOT / filename,
                               f"{package_root}/{filename}")
             archive.write(startup_hook, f"{package_root}/Startup/CartOS.sh")
@@ -112,15 +118,18 @@ def main() -> None:
                 f"CartOS version: {version_label}\n"
                 f"Miyoo SDL2 backend source: https://github.com/XK9274/sdl2_miyoo\n"
                 f"Miyoo SDL2 backend revision: {args.sdl_revision}\n"
-                "The matching backend source is available at the pinned public source revision.\n"
+                "SDL2 build option: OSS audio enabled for OnionOS libpadsp.\n"
+                "SDL2 audio patch: virtual /dev/dsp enumeration (source included).\n"
+                "Matching backend source and build notes: Source/SDL2-Miyoo/\n"
             )
             archive.writestr(f"{package_root}/BUILD-INFO.txt", build_info)
             archive.writestr(
                 f"{package_root}/Source/SDL2-Miyoo-SOURCE.txt",
-                "The bundled Miyoo SDL2 runtime was built from the public source revision listed in BUILD-INFO.txt.\n"
-                "The source repository contains the matching backend code and GPL license:\n"
-                "https://github.com/XK9274/sdl2_miyoo/tree/" + args.sdl_revision + "\n",
+                "Matching source and build notes for the bundled Miyoo SDL2 runtime are included in Source/SDL2-Miyoo/.\n"
+                "Source revision: " + args.sdl_revision + "\n"
+                "OSS audio is enabled for OnionOS libpadsp; see BUILD-NOTES.txt.\n",
             )
+            add_tree(archive, args.sdl_source_dir, f"{package_root}/Source/SDL2-Miyoo")
             add_tree(archive, ROOT, f"{package_root}/Source/CartOS")
         os.chmod(temporary_path, 0o644)
         os.replace(temporary_path, destination)

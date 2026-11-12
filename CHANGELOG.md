@@ -2,13 +2,80 @@
 
 Changes are listed newest first. Each entry describes the user-visible changes and any important compatibility notes.
 
-## 0.1.27 — Optional release
+## 0.1.28 — Cached catalog, search and readable text backing
 
-- Add OnionOS apps to Recent alongside games, with the newest item first.
-- Add CartOS Accessibility, whole-device random game selection, and optional
-  browser-position restoration after leaving a game.
-- Smooth the enlarged-cartridge transition and keep the standard v0.1.26
-  download unchanged. See the [full optional release notes](Releases/CartOS-0.1.27-Optional/CHANGELOG.md).
+- Save the discovered game catalog after the first ROM scan and read it on later launches.
+- Make X rescan all ROM folders and refresh the saved catalog, lists, and artwork after games change.
+- Rebuild a missing or damaged catalog automatically. ROMs and saves are not changed.
+- On the tested Miyoo Mini V4, the cached run saved about 0.22 seconds of CartOS initialization; full device boot time was not noticeably changed.
+- Keep hidden OnionOS utility entries out of cached game lists as well as fresh scans.
+- Restore default settings when a saved key is removed, and speed up search across duplicate lists.
+- Make every on-screen create-list key usable, including Space, apostrophe, and period.
+- Keep search selection within the result count and show only the center cartridge when one game matches.
+- Rank search results by title starts, then word starts, then other matches; avoid repeated ROM checks across lists.
+- Make Y leave Search from either keyboard or results view; keep START for results and allow typing Y on a desktop keyboard.
+- Add an optional 90%-opaque padded text backing; when Invert text colour is enabled, use a translucent white backing so dark text remains readable. The search keyboard panel is unchanged.
+
+## 0.1.27 Optional — Accessibility, random games, browser restore and recent apps
+
+- Show launched OnionOS apps alongside games in Recent, with the newest first.
+  Use A to reopen an app. Reopening an item moves it to the front without a
+  duplicate. Recent app entries use the installed app's current icon and launcher.
+
+- Remove the unnecessary direct A launch preference; A always previews artwork
+  and START remains the quick-launch shortcut. Ignore the retired saved key.
+- Enlarge the selected cartridge from its exact displayed rectangle in one
+  smooth curve, including search and off-centre selections. Remove the initial
+  size jump and keep preview text, B return and insertion poses consistent.
+- Use the supplied accessibility icon and grey out Interface sound volume
+  while navigation sounds are disabled.
+- Route the new quiet navigation tick through OnionOS's existing audio service
+  using the bundled SDL OSS driver. Preview the tick when enabling sounds.
+- Match the control-recovery hint style and draw visual feedback using four
+  inset filled strips so the left screen edge is included.
+- Keep enlarged artwork bounds consistent when preview labels appear,
+  including search and the transition into the game-launch animation.
+- Document the Miyoo rumble actuator has fixed strength; keep timed on/off
+  feedback without a nonfunctional strength setting.
+- Add internal Apps > CartOS Accessibility with four sections and its own
+  accessibility icon. No separate OnionOS app is installed.
+- Add persistent text-size presets, high contrast, reduced motion, UI dimming,
+  safe action/D-pad remapping and optional game-launch confirmation (OFF by
+  default, including START). Keep normal A previews and START quick launch.
+- Add larger artwork/controls, optional secondary-information hiding,
+  bounded scroll-speed presets and enhanced selection outlines.
+- Add optional navigation tones, independent interface sound volume, static
+  visual button feedback and capability-checked, timed vibration feedback.
+  Sounds and vibration start OFF; unavailable vibration has no toggle.
+- Add a confirmed accessibility-only reset and physical SELECT+START control
+  recovery. Preserve reserved OnionOS modifier buttons and shortcuts; START
+  quick launch acts on release without adding a second launch step.
+- Preserve unrelated and unknown settings.ini entries. Use safe defaults,
+  atomic saves and no write when configuration is unchanged. Keep all current
+  random-game and browser-restore behaviour below.
+- Fit enlarged text/artwork within safe layouts and retain gallery, primary
+  image restoration, settings, lists, favourites and normal OnionOS handoff.
+
+- Fix Select > Play random game choosing only from the current list. Choose
+  uniformly from all unique ROM paths in discovered system libraries instead.
+- Include systems hidden from vertical navigation, exclude apps and utility
+  entries, and avoid extra weighting from Recent/Favourite/custom-list copies.
+- Use the selected game's system and the existing preview/launch animation.
+  Show No games available safely when the library has no eligible ROMs.
+- Add Restore browser position to CartOS settings, OFF by default. Save the
+  choice in settings.ini, turn it off with Reset settings, and ignore/discard
+  any pending position while it is disabled.
+- When enabled, remember the source list and highlighted ROM before a game launch or
+  GameSwitcher handoff from a game list.
+- Restore that list and centre the same game in the normal browser when
+  CartOS returns, using list keys and ROM paths rather than changing indexes.
+- Keep ordinary cold starts on Recent; fall back to Recent when saved state,
+  the original list/game, or a visible source system is unavailable.
+- Store the pending position on the SD card so returning after a power-off
+  game resume can still restore it. Consume each pending position once.
+- Reuse the existing v0.1.25/v0.1.26 startup and GameSwitcher return hook.
+  Search launches return to their system list; search and artwork-page state
+  are outside this release's scope.
 
 ## 0.1.26 — Faster artwork loading and START quick launch
 

@@ -26,3 +26,12 @@ third-party components and names keep their own terms:
 
 The launcher was visually inspired by the cartridge browsing concept in
 [Slot CFW](https://slot-cfw.fyi/).
+
+## Accessibility assets and updated SDL audio configuration
+
+The accessibility icon was supplied by the CartOS maintainer and is included
+unchanged as assets/accessibility.png and res/icon/accessibility.png.
+Navigation ticks are synthesised by CartOS; no third-party sound recording is
+used. The release's SDL runtime enables its existing OSS audio driver for the
+OnionOS audio service. Matching SDL source and build notes are included in
+Source/SDL2-Miyoo; the original SDL/backend license notices still apply.

@@ -1,6 +1,7 @@
 #pragma once
 #include <SDL.h>
 #include "artwork_index.hpp"
+#include "accessibility.hpp"
 #include <array>
 #include <string>
 #include <unordered_map>
@@ -22,6 +23,7 @@ struct Game {
     std::string workingDirectory;
     bool onionMainUi=false;
     bool cartLauncherSettings=false;
+    bool cartAccessibility=false;
     SDL_Texture* artwork=nullptr;
     bool artworkAttempted=false;
     size_t artSelection=0;
@@ -54,7 +56,7 @@ public:
     Launcher();
     int run();
 private:
-    enum class Overlay { None, SelectMenu, AddToList, CreateList, DeleteConfirm, DeleteListConfirm, GameInfo, Search, Settings };
+    enum class Overlay { None, SelectMenu, AddToList, CreateList, DeleteConfirm, DeleteListConfirm, GameInfo, Search, Settings, Accessibility, AccessibilityResetConfirm };
     bool init();
     void shutdown();
     void handle(const SDL_Event& e);
@@ -65,6 +67,21 @@ private:
     void updateHeldScroll(Uint64 now);
     void render(float dt);
     void renderSearch();
+    void openAccessibility();
+    void renderAccessibility();
+    bool handleAccessibilityOverlay(const SDL_Event& e);
+    void moveAccessibilitySelection(int direction);
+    void changeAccessibility(int direction,bool activate);
+    std::vector<std::pair<std::string,std::string>> accessibilityRows() const;
+    bool saveAccessibility();
+    bool accessibilityRowEnabled(int row) const;
+    void applyAccessibility();
+    void noteInput(const std::string& action);
+    std::string controlHints(const std::string& text) const;
+    void presentFrame();
+    void requestGameLaunch();
+    void commitGameLaunch();
+    void cancelLaunchConfirmation();
     void renderBackground();
     void loadSettings();
     void saveSettings() const;
@@ -73,8 +90,11 @@ private:
     bool selectBackground(int direction);
     void moveSettingsSelection(int direction);
     void discoverRecent(const std::string& sdRoot);
+    bool readRecentGame(const std::string& romPath, const std::string& title, const SystemInfo* system, Game& game) const;
+    void mergeRecentHistory(Category& recent, const Category& apps);
+    bool rememberRecentLaunch(const Game& entry) const;
     void discoverSystems(const std::string& sdRoot);
-    void discoverGames();
+    void discoverGames(bool forceRomScan = false);
     void discoverCollections(const std::string& sdRoot);
     void discoverApps(const std::string& sdRoot);
     void applyListOrder();
@@ -83,18 +103,24 @@ private:
     void launchSelected(bool quickLaunch = false);
     void beginLaunchAnimation(size_t categoryIndex, size_t entryIndex);
     Game* launchingGame();
+    SDL_Rect launchArtworkRect() const;
+    void drawLaunchingCartridge(Game& game);
     void browsePreviewPage(int direction);
     void selectPreviewArtwork(size_t selection);
     void resetPreviewArtwork();
     void loadArtworkVariants(Game& game);
     artwork::Index& artworkIndexFor(const SystemInfo& system, bool rebuild = false);
     void drawPreviewGameDetails(const Game& game);
+    bool saveBrowserState(size_t categoryIndex, const std::string& romPath) const;
+    void restoreBrowserState(bool returningFromOnion);
     void launchGame(const Game& game);
     void openOnionGameSwitcher();
     void beginMenuPress();
     void endMenuPress();
     void openSelectMenu();
     void activateSelectMenu();
+    std::vector<std::pair<size_t,size_t>> randomGameCandidates() const;
+    void playRandomGame();
     void addSelectedToList(const std::string& label);
     void toggleSelectedFavorite();
     void removeSelectedFromList();
@@ -104,6 +130,7 @@ private:
     void refreshAll();
     void startSearch();
     void updateSearchResults();
+    void moveSearchSelection(int direction);
     void launchSearchSelected();
     void handleSearchInput(const SDL_Event& e);
     bool writeListEntry(const std::string& path, const Game& game, bool removeExisting);
@@ -122,6 +149,19 @@ private:
     int cartridgeScaleFor(const std::string& systemId) const;
     bool systemHiddenFor(const std::string& systemId) const;
     int settingsRowCount() const;
+    accessibility::Preferences accessibility_;
+    accessibility::NavigationAudio navigationAudio_;
+    int accessibilityPage_=-1;
+    int accessibilitySelection_=0;
+    bool accessibilityResetBindingsOnly_=false;
+    bool vibrationAvailable_=false;
+    Uint64 inputFeedbackAt_=0;
+    std::string inputFeedbackText_;
+    bool launchConfirmationOpen_=false;
+    bool launchConfirmationWasPreview_=false;
+    int launchConfirmationSelection_=1;
+    bool startButtonHeld_=false;
+    bool startButtonChord_=false;
     SDL_Window* window_=nullptr;
     SDL_Renderer* renderer_=nullptr;
     bool rendererVsync_=false;
@@ -132,11 +172,13 @@ private:
     SDL_GameController* controller_=nullptr;
     SDL_Joystick* joystick_=nullptr;
     std::vector<Category> categories_;
+    std::vector<std::string> nativeRecentGames_;
     std::vector<SystemInfo> systems_;
     std::vector<int> rememberedSelections_;
     std::vector<std::string> listOrder_;
     std::unordered_map<std::string,artwork::Index> artworkIndexes_;
     std::string sdRoot_;
+    bool lastCatalogLoaded_=false;
     std::string playtimeLookupRom_;
     long long playtimeLookupSeconds_=-1;
     std::array<bool,4> scrollHeld_{{false,false,false,false}};
@@ -146,7 +188,9 @@ private:
     bool showBatteryLevel_=true;
     bool showControlHints_=true;
     bool invertTextColour_=false;
+    bool textBackground_=false;
     bool hideGameTitle_=false;
+    bool restoreBrowserPosition_=false;
     std::unordered_map<std::string,int> cartridgeScaleBySystem_;
     std::unordered_map<std::string,bool> hiddenSystemById_;
     int carouselSpacing_=1;
@@ -187,7 +231,11 @@ private:
     float launchCenteringPosition_=0.0f;
     float launchCenterDuration_=0.16f;
     float launchReverseElapsed_=0.0f;
-    float launchReverseStartScale_=1.34f;
+    SDL_Rect launchStartArtwork_{};
+    SDL_Rect launchPreviewArtwork_{};
+    SDL_Rect launchReturnArtwork_{};
+    SDL_Rect launchPreviewContainer_{};
+    SDL_Point launchPrimarySize_{};
     Uint64 launchFirstPressAt_=0;
     int settingsSelection_=0;
     int settingsScrollOffset_=0;

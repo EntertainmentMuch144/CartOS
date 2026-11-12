@@ -1,20 +1,25 @@
 
 #include "launcher.hpp"
 #include "artwork.hpp"
+#include "catalog_cache.hpp"
 #include "draw.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <dlfcn.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <limits.h>
+#include <random>
 #include <sstream>
 #include <sys/stat.h>
 #include <unordered_set>
@@ -26,12 +31,14 @@
 
 namespace {
 constexpr int kDesignW=752, kDesignH=560;
+constexpr const char* kBrowserStatePath=".browser-state";
+constexpr const char* kRecentHistoryPath="/App/CartOS/recent-history.txt";
+constexpr const char* kGameCatalogPath="/App/CartOS/cache/game-catalog-v1.txt";
+constexpr int kGeneralSettingsCount=13;
 constexpr float kLaunchAnimationDuration=1.20f;
 constexpr float kLaunchCenterDuration=0.16f;
 constexpr float kLaunchReverseDuration=0.32f;
 constexpr Uint64 kLaunchDoubleTapWindowMs=380;
-constexpr Uint64 kScrollInitialDelayMs=360;
-constexpr Uint64 kScrollRepeatIntervalMs=180;
 void fillRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color);
 void outlineRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color);
 std::string shortLabel(std::string value,size_t limit);
@@ -208,6 +215,15 @@ std::string comparableRomPath(const std::string& path,const std::string& sdRoot)
     std::string normalized;
     for(const std::string& item:components) normalized+="/"+item;
     return normalized.empty()?"/":normalized;
+}
+
+std::string recentEntryKey(const Game& entry,const std::string& sdRoot){
+    if(entry.kind==EntryKind::App){
+        if(entry.workingDirectory.empty()) return "A "+entry.launcherPath;
+        return "A "+onionPath(entry.workingDirectory,sdRoot);
+    }
+    if(entry.romPath.empty()) return {};
+    return "G "+onionPath(comparableRomPath(entry.romPath,sdRoot),sdRoot);
 }
 
 bool regularFile(const std::string& path){
@@ -395,6 +411,8 @@ size_t Launcher::adjacentReorderCategory(int direction) const{
 }
 
 bool Launcher::init(){
+    using StartupClock=std::chrono::steady_clock;
+    const auto started=StartupClock::now();
 #if defined(LAUNCHER_DEVICE)
     // The Miyoo SDL backend defaults to unsynchronized presentation. Request
     // page-flip vsync before SDL initializes the framebuffer; it falls back
@@ -442,6 +460,7 @@ bool Launcher::init(){
     }
     SDL_RenderSetLogicalSize(renderer_,kDesignW,kDesignH);
     SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);
+    const auto displayReady=StartupClock::now();
     const char* configuredFont=std::getenv("CARTOS_FONT");
     std::string fontPath=(configuredFont && *configuredFont)?configuredFont:
                          (access("assets/font_atlas.png",R_OK)==0?"assets/font_atlas.png":"res/font_atlas.png");
@@ -449,18 +468,26 @@ bool Launcher::init(){
         std::fprintf(stderr,"font atlas could not be loaded: %s\n",fontPath.c_str());
         return false;
     }
+    const auto fontReady=StartupClock::now();
     discoverGames();
+    const auto catalogReady=StartupClock::now();
     reloadBackgroundChoices();
+    const auto backgroundReady=StartupClock::now();
     const char* skipStartupAnimation=std::getenv("CARTOS_SKIP_STARTUP_ANIMATION");
-    startupAnimation_=startupAnimationEnabled_ &&
-        !(skipStartupAnimation && std::string(skipStartupAnimation)=="1") &&
-        !categories_.empty() && !categories_.front().entries.empty();
+    const bool returningFromOnion=skipStartupAnimation && std::string(skipStartupAnimation)=="1";
+    restoreBrowserState(returningFromOnion);
+    const Category* initialCategory=currentCategory();
+    startupAnimation_=startupAnimationEnabled_ && !accessibility_.reducedMotion && !returningFromOnion &&
+        initialCategory && !initialCategory->entries.empty();
     startupAnimationElapsed_=0.0f;
     for(int i=0;i<SDL_NumJoysticks();++i){
         if(SDL_IsGameController(i)) controller_=SDL_GameControllerOpen(i);
         if(controller_) break;
         if(!joystick_) joystick_=SDL_JoystickOpen(i);
     }
+    vibrationAvailable_=controller_?SDL_GameControllerHasRumble(controller_):
+        joystick_?SDL_JoystickHasRumble(joystick_):false;
+    if(!vibrationAvailable_) accessibility_.vibration=false;
     if(controller_){
         char* mapping=SDL_GameControllerMapping(controller_);
         if(mapping){
@@ -469,15 +496,29 @@ bool Launcher::init(){
             SDL_free(mapping);
         }
     }
+#if defined(LAUNCHER_DEVICE)
+    // Beta-only startup timings distinguish CartOS work from OnionOS boot.
+    const auto ready=StartupClock::now();
+    auto milliseconds=[](StartupClock::time_point a,StartupClock::time_point b){
+        return std::chrono::duration_cast<std::chrono::milliseconds>(b-a).count();
+    };
+    std::ofstream timing(sdRoot_+"/App/CartOS/startup-timing.log",std::ios::app);
+    if(timing){
+        timing<<std::time(nullptr)<<" catalog="<<(lastCatalogLoaded_?"cached":"scanned")
+              <<" display_ms="<<milliseconds(started,displayReady)
+              <<" font_ms="<<milliseconds(displayReady,fontReady)
+              <<" games_ms="<<milliseconds(fontReady,catalogReady)
+              <<" background_ms="<<milliseconds(catalogReady,backgroundReady)
+              <<" finish_ms="<<milliseconds(backgroundReady,ready)
+              <<" total_ms="<<milliseconds(started,ready)<<'\n';
+    }
+#endif
     return true;
 }
 
-void Launcher::discoverGames(){
-    const std::string root="/mnt/SDCARD/Roms";
-    std::string sdRoot="/mnt/SDCARD";
-    const std::string romsSuffix="/Roms";
-    if(root.size()>=romsSuffix.size() && root.compare(root.size()-romsSuffix.size(),romsSuffix.size(),romsSuffix)==0)
-        sdRoot=root.substr(0,root.size()-romsSuffix.size());
+void Launcher::discoverGames(bool forceRomScan){
+    const std::string sdRoot=sdRoot_.empty()?"/mnt/SDCARD":sdRoot_;
+    const std::string root=sdRoot+"/Roms";
     sdRoot_=sdRoot;
     systems_.clear();
     categories_.clear();
@@ -486,12 +527,40 @@ void Launcher::discoverGames(){
     loadSettings();
     int variant=0;
     discoverRecent(sdRoot);
+    std::vector<catalog_cache::System> catalogSystems;
+    catalogSystems.reserve(systems_.size());
+    for(const SystemInfo& system:systems_)
+        catalogSystems.push_back({system.id,system.label,system.launcherPath,
+                                  system.artworkPath,system.romPaths,system.extensions});
+    const std::string catalogPath=sdRoot+ kGameCatalogPath;
+    const std::string catalogSignature=catalog_cache::fingerprint(catalogSystems);
+    catalog_cache::Listings catalogListings;
+    const bool catalogLoaded=!forceRomScan &&
+        catalog_cache::load(catalogPath,catalogSignature,catalogSystems,catalogListings);
+    lastCatalogLoaded_=catalogLoaded;
+    if(!catalogLoaded) catalogListings.reserve(systems_.size());
     std::unordered_set<std::string> systemsWithGames;
-    for(const SystemInfo& system:systems_){
+    for(size_t systemIndex=0;systemIndex<systems_.size();++systemIndex){
+        const SystemInfo& system=systems_[systemIndex];
         Category category;
         category.label=system.label;
         category.systemId=system.id;
         category.orderKey="system:"+system.id;
+        if(catalogLoaded){
+            for(const catalog_cache::Entry& entry:catalogListings[systemIndex]){
+                if(isUtilityEntry(entry.title,entry.romPath)) continue;
+                Game game;
+                game.title=entry.title;
+                game.system=system.label;
+                game.console=system.id;
+                game.romPath=entry.romPath;
+                game.defaultArtPath=entry.artworkPath;
+                game.artPath=entry.artworkPath;
+                game.launcherPath=system.launcherPath;
+                game.variant=variant++;
+                category.entries.push_back(std::move(game));
+            }
+        }else{
         std::unordered_set<std::string> artworkFiles;
         const std::string artworkDir=system.artworkPath;
         DIR* artworkHandle=opendir(artworkDir.c_str());
@@ -545,7 +614,15 @@ void Launcher::discoverGames(){
         };
         for(const std::string& romRoot:system.romPaths)
             scanDirectory(romRoot,0);
+        }
         std::sort(category.entries.begin(),category.entries.end(),[](const Game& a,const Game& b){return lower(a.title)<lower(b.title);});
+        if(!catalogLoaded){
+            std::vector<catalog_cache::Entry> cached;
+            cached.reserve(category.entries.size());
+            for(const Game& game:category.entries)
+                cached.push_back({game.title,game.romPath,game.defaultArtPath});
+            catalogListings.push_back(std::move(cached));
+        }
         // OnionOS can contain dozens of system configs. Keep the browser
         // focused on systems with at least one ROM actually present.
         if(!category.entries.empty()){
@@ -553,16 +630,20 @@ void Launcher::discoverGames(){
             categories_.push_back(std::move(category));
         }
     }
+    if(!catalogLoaded && !catalog_cache::save(catalogPath,catalogSignature,catalogSystems,catalogListings))
+        std::fprintf(stderr,"Game catalog cache could not be saved; scanning will run next launch\n");
     systems_.erase(std::remove_if(systems_.begin(),systems_.end(),[&](const SystemInfo& system){
         return systemsWithGames.find(system.id)==systemsWithGames.end();
     }),systems_.end());
     discoverCollections(sdRoot);
     discoverApps(sdRoot);
+    mergeRecentHistory(categories_.front(),categories_.back());
     applyListOrder();
     rememberedSelections_.assign(categories_.size(),0);
     std::size_t total=0;
     for(const Category& category:categories_) total+=category.entries.size();
-    std::fprintf(stdout,"Discovered %zu entries across %zu lists under %s\n",total,categories_.size(),root.c_str());
+    std::fprintf(stdout,"Discovered %zu entries across %zu lists under %s (%s catalog)\n",
+                 total,categories_.size(),root.c_str(),catalogLoaded?"cached":"scanned");
     std::fflush(stdout);
 }
 
@@ -638,29 +719,36 @@ bool Launcher::systemHiddenFor(const std::string& systemId) const{
     return found!=hiddenSystemById_.end() && found->second;
 }
 
+bool Launcher::readRecentGame(const std::string& romPath,const std::string& title,
+                              const SystemInfo* system,Game& game) const{
+    if(!regularFile(romPath)) return false;
+    if(!system) system=systemForRomPath(romPath);
+    const std::string filename=romPath.substr(romPath.find_last_of('/')+1);
+    if(!system || !supportedRom(filename,*system) || isUtilityEntry(title,filename)) return false;
+    const std::string stem=filename.substr(0,filename.find_last_of('.'));
+    game.title=title.empty()?stem:title;
+    game.system=system->label;
+    game.console=system->id;
+    game.romPath=romPath;
+    game.launcherPath=system->launcherPath;
+    const std::string imagePath=system->artworkPath+"/"+stem+".png";
+    if(regularFile(imagePath)) game.artPath=imagePath;
+    return true;
+}
+
 void Launcher::discoverRecent(const std::string& sdRoot){
     Category recent;
     recent.label="recent";
     recent.orderKey="recent";
-    std::vector<std::string> seenPaths;
+    std::unordered_set<std::string> seenPaths;
 
     auto addRecent=[&](const std::string& rawPath,const std::string& rawTitle,const SystemInfo* hintedSystem){
         if(rawPath.empty()) return;
         const std::string romPath=sdPath(rawPath,sdRoot);
-        if(std::find(seenPaths.begin(),seenPaths.end(),romPath)!=seenPaths.end() || !regularFile(romPath)) return;
-        const SystemInfo* system=hintedSystem?hintedSystem:systemForRomPath(romPath);
-        const std::string filename=romPath.substr(romPath.find_last_of('/')==std::string::npos?0:romPath.find_last_of('/')+1);
-        if(!system || !supportedRom(filename,*system) || isUtilityEntry(rawTitle,filename)) return;
-        seenPaths.push_back(romPath);
+        const std::string normalized=comparableRomPath(romPath,sdRoot);
         Game game;
-        game.title=rawTitle;
-        if(game.title.empty()) game.title=filename.substr(0,filename.find_last_of('.'));
-        game.system=system->label;
-        game.console=system->id;
-        game.romPath=romPath;
-        game.launcherPath=system->launcherPath;
-        const std::string imagePath=system->artworkPath+"/"+filename.substr(0,filename.find_last_of('.'))+".png";
-        if(regularFile(imagePath)) game.artPath=imagePath;
+        if(seenPaths.count(normalized) || !readRecentGame(romPath,rawTitle,hintedSystem,game)) return;
+        seenPaths.insert(normalized);
         game.variant=static_cast<int>(recent.entries.size());
         recent.entries.push_back(std::move(game));
     };
@@ -689,6 +777,88 @@ void Launcher::discoverRecent(const std::string& sdRoot){
         }
     }
     categories_.push_back(std::move(recent));
+}
+
+void Launcher::mergeRecentHistory(Category& recent,const Category& apps){
+    nativeRecentGames_.clear();
+    for(const Game& game:recent.entries) nativeRecentGames_.push_back(recentEntryKey(game,sdRoot_));
+
+    std::ifstream input(sdRoot_+kRecentHistoryPath);
+    std::string header;
+    if(!std::getline(input,header) || header!="CartOSRecent1") return;
+    std::vector<std::string> savedOrder;
+    std::unordered_map<std::string,size_t> priorNativeRank;
+    char section;
+    std::string key;
+    while(input>>section>>std::quoted(key)){
+        if(section=='M') savedOrder.push_back(key);
+        else if(section=='N') priorNativeRank.emplace(key,priorNativeRank.size());
+        else return;
+    }
+    if(savedOrder.empty()) return;
+
+    // The native list moves played games to the front. Its longest suffix
+    // still in the previous order is unchanged, even if older items fell off.
+    size_t firstUnchanged=nativeRecentGames_.size();
+    size_t nextRank=priorNativeRank.size();
+    while(firstUnchanged>0){
+        const auto rank=priorNativeRank.find(nativeRecentGames_[firstUnchanged-1]);
+        if(rank==priorNativeRank.end() || rank->second>=nextRank) break;
+        nextRank=rank->second;
+        --firstUnchanged;
+    }
+
+    std::unordered_map<std::string,const Game*> available;
+    for(size_t i=0;i<recent.entries.size();++i)
+        available.emplace(nativeRecentGames_[i],&recent.entries[i]);
+    for(const Game& app:apps.entries)
+        if(!app.workingDirectory.empty()) available.emplace(recentEntryKey(app,sdRoot_),&app);
+
+    std::vector<Game> merged;
+    std::unordered_set<std::string> seen;
+    auto append=[&](const std::string& id){
+        if(!seen.insert(id).second) return;
+        const auto found=available.find(id);
+        if(found!=available.end()) merged.push_back(*found->second);
+        else if(id.compare(0,2,"G ")==0 && !priorNativeRank.count(id)){
+            // Standalone games launched through CartOS can be absent from
+            // RetroArch's history. Validate them again against the SD card.
+            Game game;
+            if(readRecentGame(sdPath(id.substr(2),sdRoot_),{},nullptr,game)){
+                game.variant=static_cast<int>(merged.size());
+                merged.push_back(std::move(game));
+            }
+        }
+    };
+    for(size_t i=0;i<firstUnchanged;++i) append(nativeRecentGames_[i]);
+    for(const std::string& id:savedOrder) append(id);
+    for(const std::string& id:nativeRecentGames_) append(id);
+    recent.entries=std::move(merged);
+}
+
+bool Launcher::rememberRecentLaunch(const Game& entry) const{
+    const std::string key=recentEntryKey(entry,sdRoot_);
+    if(key.empty() || (entry.kind==EntryKind::App && entry.workingDirectory.empty())) return true;
+
+    const std::string path=sdRoot_+kRecentHistoryPath;
+    const std::string temporary=path+".tmp";
+    std::ofstream output(temporary,std::ios::trunc);
+    if(!output) return false;
+    output<<"CartOSRecent1\nM "<<std::quoted(key)<<'\n';
+    std::unordered_set<std::string> saved{key};
+    for(const Category& category:categories_){
+        if(category.orderKey!="recent") continue;
+        for(const Game& item:category.entries){
+            const std::string id=recentEntryKey(item,sdRoot_);
+            if(!id.empty() && saved.insert(id).second) output<<"M "<<std::quoted(id)<<'\n';
+        }
+        break;
+    }
+    for(const std::string& id:nativeRecentGames_) output<<"N "<<std::quoted(id)<<'\n';
+    output.close();
+    if(output && rename(temporary.c_str(),path.c_str())==0) return true;
+    unlink(temporary.c_str());
+    return false;
 }
 
 void Launcher::discoverCollections(const std::string& sdRoot){
@@ -813,6 +983,17 @@ void Launcher::discoverApps(const std::string& sdRoot){
     settings.cartLauncherSettings=true;
     settings.variant=variant++;
     apps.entries.push_back(std::move(settings));
+    Game accessible;
+    accessible.kind=EntryKind::App;
+    accessible.title="CartOS Accessibility";
+    accessible.system="CARTOS APP";
+    accessible.launcherPath="builtin:cartos-accessibility";
+    accessible.artPath=sdRoot+"/App/CartOS/res/icon/accessibility.png";
+    if(access(accessible.artPath.c_str(),R_OK)!=0)
+        accessible.artPath=access("assets/accessibility.png",R_OK)==0?"assets/accessibility.png":"res/icon/accessibility.png";
+    accessible.cartAccessibility=true;
+    accessible.variant=variant++;
+    apps.entries.push_back(std::move(accessible));
     std::sort(apps.entries.begin(),apps.entries.end(),[](const Game& a,const Game& b){return lower(a.title)<lower(b.title);});
     categories_.push_back(std::move(apps));
 }
@@ -873,6 +1054,11 @@ void Launcher::moveList(int direction){
 }
 
 void Launcher::shutdown(){
+    navigationAudio_.close();
+    if(vibrationAvailable_){
+        if(controller_)SDL_GameControllerRumble(controller_,0,0,0);
+        else if(joystick_)SDL_JoystickRumble(joystick_,0,0,0);
+    }
     if(backgroundArtwork_){SDL_DestroyTexture(backgroundArtwork_);backgroundArtwork_=nullptr;}
     for(Category& category:categories_) clearArtwork(category.entries);
     draw::shutdownFont();
@@ -891,7 +1077,16 @@ void Launcher::shutdown(){
 void Launcher::renderBackground(){
     SDL_SetRenderDrawColor(renderer_,0,0,0,255);
     SDL_RenderClear(renderer_);
-    draw::background(renderer_,backgroundArtwork_,kDesignW,kDesignH);
+    if(!accessibility_.highContrast){
+        draw::background(renderer_,backgroundArtwork_,kDesignW,kDesignH);
+        if(accessibility_.dimming){
+            static const Uint8 levels[]={0,40,88,136};
+            SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer_,0,0,0,levels[accessibility_.dimming]);
+            SDL_RenderFillRect(renderer_,nullptr);
+            SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);
+        }
+    }
 }
 
 void Launcher::move(int direction){
@@ -931,11 +1126,13 @@ void Launcher::setScrollHeld(int direction,bool held){
     if(held){
         if(scrollHeld_[index]) return;
         scrollHeld_[index]=true;
-        scrollSettingsMode_[index]=(overlay_==Overlay::Settings);
-        scrollRepeatAt_[index]=SDL_GetTicks64()+kScrollInitialDelayMs;
+        scrollSettingsMode_[index]=(overlay_==Overlay::Settings || overlay_==Overlay::Accessibility);
+        scrollRepeatAt_[index]=SDL_GetTicks64()+accessibility_.repeatDelay();
         if(scrollSettingsMode_[index]){
-            if(direction==2) moveSettingsSelection(-1);
-            else if(direction==3) moveSettingsSelection(1);
+            if(direction>=2){
+                if(overlay_==Overlay::Accessibility)moveAccessibilitySelection(direction==2?-1:1);
+                else moveSettingsSelection(direction==2?-1:1);
+            }
         }else{
             if(direction==0) move(-1);
             else if(direction==1) move(1);
@@ -952,8 +1149,10 @@ void Launcher::updateHeldScroll(Uint64 now){
     for(size_t index=0;index<scrollHeld_.size();++index){
         if(!scrollHeld_[index] || now<scrollRepeatAt_[index]) continue;
         if(scrollSettingsMode_[index]){
-            if(overlay_!=Overlay::Settings || index<2) continue;
-            moveSettingsSelection(index==2?-1:1);
+            if(index<2)continue;
+            if(overlay_==Overlay::Accessibility)moveAccessibilitySelection(index==2?-1:1);
+            else if(overlay_==Overlay::Settings)moveSettingsSelection(index==2?-1:1);
+            else continue;
         }else{
             if(overlay_!=Overlay::None) continue;
             if(index==0) move(-1);
@@ -963,7 +1162,8 @@ void Launcher::updateHeldScroll(Uint64 now){
         }
         // Schedule from the current frame instead of catching up missed ticks,
         // which keeps scrolling bounded even if rendering briefly stalls.
-        scrollRepeatAt_[index]=now+kScrollRepeatIntervalMs;
+        scrollRepeatAt_[index]=now+accessibility_.repeatInterval();
+        noteInput("SCROLL");
     }
 }
 
@@ -973,6 +1173,7 @@ void Launcher::launchSelected(bool quickLaunch){
     const int selected=wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(category->entries.size()));
     Game& entry=category->entries[static_cast<size_t>(selected)];
     if(quickLaunch && (menuButtonHeld_ || entry.kind!=EntryKind::Game || !regularFile(entry.romPath))) return;
+    if(entry.cartAccessibility){openAccessibility();return;}
     if(entry.cartLauncherSettings){
         settingsSelection_=0;
         settingsScrollOffset_=0;
@@ -983,7 +1184,7 @@ void Launcher::launchSelected(bool quickLaunch){
         beginLaunchAnimation(categoryIndex_,static_cast<size_t>(selected));
         // Use the double-A path: play the whole existing animation without
         // pausing at step one or discovering unused gallery images.
-        launchStepTwoConfirmed_=quickLaunch;
+        if(quickLaunch)requestGameLaunch();
         return;
     }
     launchGame(entry);
@@ -1000,7 +1201,6 @@ void Launcher::beginLaunchAnimation(size_t categoryIndex,size_t entryIndex){
     launchCenteringOffset_=0.0f;
     launchCenteringPosition_=std::round(position_);
     launchReverseElapsed_=0.0f;
-    launchReverseStartScale_=1.34f;
     if(launchCenterDuration_>0.0f){
         const float selected=launchCenteringPosition_;
         const float spacing=carouselSpacing_==0?215.0f:(carouselSpacing_==2?255.0f:240.0f);
@@ -1010,12 +1210,83 @@ void Launcher::beginLaunchAnimation(size_t categoryIndex,size_t entryIndex){
         // drawn slightly to one side in the normal browser view.
         launchCenteringOffset_=(position_-selected)*spacing;
     }
+    Game& game=categories_[categoryIndex].entries[entryIndex];
+    if(renderer_ && !game.artwork && !game.artworkAttempted && !game.artPath.empty()){
+        game.artworkAttempted=true;
+        game.artwork=artwork::loadPng(renderer_,game.artPath);
+    }
+    launchPrimarySize_={0,0};
+    if(game.artwork)SDL_QueryTexture(game.artwork,nullptr,nullptr,&launchPrimarySize_.x,&launchPrimarySize_.y);
+    const bool search=overlay_==Overlay::Search;
+    const bool largeLayout=accessibility_.textSize==2 || accessibility_.largeArtwork || accessibility_.largeControls;
+    const int consoleScale=cartridgeScaleFor(game.console);
+    const float consolePreference=consoleScale==0?.90f:consoleScale==2?1.10f:1.0f;
+    const float artworkPreference=accessibility_.largeArtwork?1.18f:1.0f;
+    const int centerY=search?(searchResultsFocused_?238:226):254;
+    const SDL_Rect viewport=search?(searchResultsFocused_?SDL_Rect{20,126,712,250}:SDL_Rect{20,126,712,180}):
+        SDL_Rect{12,largeLayout?118:100,728,largeLayout?298:316};
+    const float distance=search?0.0f:std::min(1.0f,std::fabs(position_-launchCenteringPosition_));
+    const float factor=artworkPreference*(search?1.0f:consolePreference);
+    const int width=static_cast<int>((search?220:280-95*distance)*factor);
+    const int height=static_cast<int>((search?275:350-120*distance)*factor);
+    const int sourceX=376-static_cast<int>(search?0.0f:launchCenteringOffset_);
+    launchStartArtwork_=draw::artworkRect(game.artwork,{sourceX-width/2,centerY-height/2,width,height},viewport);
+    const int returnWidth=static_cast<int>((search?220:280)*factor);
+    const int returnHeight=static_cast<int>((search?275:350)*factor);
+    launchReturnArtwork_=draw::artworkRect(game.artwork,{376-returnWidth/2,centerY-returnHeight/2,returnWidth,returnHeight},viewport);
+    const float fullFactor=1.34f*consolePreference*artworkPreference;
+    const int previewWidth=static_cast<int>(280*fullFactor),previewHeight=static_cast<int>(350*fullFactor);
+    const int previewY=search?274:254;
+    launchPreviewContainer_={376-previewWidth/2,previewY-previewHeight/2,previewWidth,previewHeight};
+    launchPreviewArtwork_=draw::artworkRect(game.artwork,launchPreviewContainer_,{20,22,712,426});
+    // Centring may move the cart, but must never resize it. An already-centred
+    // selection starts growing immediately from the exact browser rectangle.
+    if(search || std::abs(launchStartArtwork_.x+launchStartArtwork_.w/2-376)<=1)launchCenterDuration_=0.0f;
     launchAwaitingConfirm_=false;
     launchArtworkLoading_=false;
     launchReversing_=false;
     launchStepTwoConfirmed_=false;
     launchFirstPressAt_=SDL_GetTicks64();
     launchAnimation_=true;
+    scrollHeld_.fill(false);
+    if(accessibility_.reducedMotion){
+        position_=target_=launchCenteringPosition_;
+        launchCenteringOffset_=0.0f;
+        launchAnimationElapsed_=launchCenterDuration_+0.50f;
+        launchAwaitingConfirm_=true;
+        launchArtworkLoading_=true;
+    }
+}
+
+SDL_Rect Launcher::launchArtworkRect() const{
+    auto smooth=[](float t){t=std::max(0.0f,std::min(1.0f,t));return t*t*(3.0f-2.0f*t);};
+    auto mix=[](SDL_Rect a,SDL_Rect b,float t){
+        return SDL_Rect{static_cast<int>(std::lround(a.x+(b.x-a.x)*t)),static_cast<int>(std::lround(a.y+(b.y-a.y)*t)),
+            static_cast<int>(std::lround(a.w+(b.w-a.w)*t)),static_cast<int>(std::lround(a.h+(b.h-a.h)*t))};
+    };
+    if(launchReversing_)return mix(launchPreviewArtwork_,launchReturnArtwork_,smooth(launchReverseElapsed_/kLaunchReverseDuration));
+    SDL_Rect centred=launchStartArtwork_;
+    if(launchCenterDuration_>0.0f)centred.x=376-centred.w/2;
+    if(launchAnimationElapsed_<launchCenterDuration_ && !accessibility_.reducedMotion)
+        return mix(launchStartArtwork_,centred,smooth(launchAnimationElapsed_/launchCenterDuration_));
+    const float time=accessibility_.reducedMotion?.50f:std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
+    SDL_Rect image=mix(centred,launchPreviewArtwork_,smooth(time/.38f));
+    const float lift=smooth((time-.50f)/.14f),drop=smooth((time-.64f)/.36f);
+    image.y-=static_cast<int>(std::lround(30*lift));
+    image.y+=static_cast<int>(std::lround((kDesignH+30-image.y)*drop));
+    return image;
+}
+
+void Launcher::drawLaunchingCartridge(Game& game){
+    SDL_Rect image=launchArtworkRect();
+    const bool secondary=launchAwaitingConfirm_ && game.artSelection>0;
+    if(secondary)image=draw::artworkRect(game.artwork,launchPreviewContainer_,{20,22,712,426});
+    int width=0,height=0;
+    if(game.artwork)SDL_QueryTexture(game.artwork,nullptr,nullptr,&width,&height);
+    if(game.artwork && (secondary || (width==launchPrimarySize_.x && height==launchPrimarySize_.y))){
+        SDL_RenderCopy(renderer_,game.artwork,nullptr,&image);
+        draw::selection(renderer_,image);
+    }else draw::cartridge(renderer_,image,game.system,game.title,game.variant,true,game.artwork);
 }
 
 Game* Launcher::launchingGame(){
@@ -1159,25 +1430,38 @@ void Launcher::drawPreviewGameDetails(const Game& game){
     const int playtimeSize=activityTrackerInstalled?20:16;
     draw::text(renderer_,100,314,shortLabel(playtime,56),playtimeSize,activityTrackerInstalled?white:muted);
     draw::text(renderer_,100,352,"ROM FILE",15,muted);
-    draw::text(renderer_,100,372,shortLabel(game.romPath,62),16,white);
+    draw::text(renderer_,100,372,draw::fitText(game.romPath,16,568),16,white);
 }
 
 void Launcher::loadSettings(){
+    accessibility_=accessibility::Preferences{};
+    startupAnimationEnabled_=true;
+    showGameCount_=showBatteryLevel_=showControlHints_=true;
+    invertTextColour_=textBackground_=hideGameTitle_=false;
+    restoreBrowserPosition_=false; // Existing settings without this key stay opted out.
+    backgroundFile_="BG.png";
+    carouselSpacing_=animationSpeed_=titleSize_=1;
+    cartridgeScaleBySystem_.clear();
+    hiddenSystemById_.clear();
     const std::string data=readText(sdRoot_+"/App/CartOS/settings.ini");
     std::istringstream lines(data);
     std::string line;
     std::vector<std::pair<int,std::string>> storedListOrder;
     int legacyScale=-1;
     while(std::getline(lines,line)){
+        if(!line.empty() && line.back()=='\r')line.pop_back();
         const size_t separator=line.find('=');
         if(separator==std::string::npos) continue;
         const std::string key=line.substr(0,separator), value=line.substr(separator+1);
+        if(accessibility_.read(key,value))continue;
         if(key=="startup_animation") startupAnimationEnabled_=(value!="0");
         else if(key=="show_game_count") showGameCount_=(value!="0");
         else if(key=="show_battery_level") showBatteryLevel_=(value!="0");
         else if(key=="show_control_hints") showControlHints_=(value!="0");
         else if(key=="invert_text_colour") invertTextColour_=(value=="1");
+        else if(key=="text_background") textBackground_=(value=="1");
         else if(key=="hide_game_title") hideGameTitle_=(value=="1");
+        else if(key=="restore_browser_position") restoreBrowserPosition_=(value=="1");
         else if(key=="background_file") backgroundFile_=value;
         else if(key.compare(0,11,"list_order_")==0){
             const std::string indexText=key.substr(11);
@@ -1201,6 +1485,8 @@ void Launcher::loadSettings(){
         else if(key=="animation_speed") animationSpeed_=std::max(0,std::min(2,std::atoi(value.c_str())));
         else if(key=="title_size") titleSize_=std::max(0,std::min(2,std::atoi(value.c_str())));
     }
+    accessibility_.validate();
+    applyAccessibility();
     std::sort(storedListOrder.begin(),storedListOrder.end(),[](const std::pair<int,std::string>& a,const std::pair<int,std::string>& b){
         return a.first<b.first;
     });
@@ -1217,15 +1503,15 @@ void Launcher::loadSettings(){
 
 void Launcher::saveSettings() const{
     const std::string path=sdRoot_+"/App/CartOS/settings.ini";
-    const std::string temporary=path+".tmp";
-    std::ofstream file(temporary.c_str(),std::ios::out|std::ios::trunc);
-    if(!file) return;
+    std::ostringstream file;
     file<<"startup_animation="<<(startupAnimationEnabled_?1:0)<<"\n"
         <<"show_game_count="<<(showGameCount_?1:0)<<"\n"
         <<"show_battery_level="<<(showBatteryLevel_?1:0)<<"\n"
         <<"show_control_hints="<<(showControlHints_?1:0)<<"\n"
         <<"invert_text_colour="<<(invertTextColour_?1:0)<<"\n"
+        <<"text_background="<<(textBackground_?1:0)<<"\n"
         <<"hide_game_title="<<(hideGameTitle_?1:0)<<"\n"
+        <<"restore_browser_position="<<(restoreBrowserPosition_?1:0)<<"\n"
         <<"background_file="<<backgroundFile_<<"\n"
         <<"carousel_spacing="<<carouselSpacing_<<"\n"
         <<"animation_speed="<<animationSpeed_<<"\n"
@@ -1236,8 +1522,14 @@ void Launcher::saveSettings() const{
         file<<"cartridge_scale_"<<scale.first<<"="<<scale.second<<"\n";
     for(const auto& hidden:hiddenSystemById_)
         file<<"hidden_system_"<<hidden.first<<"="<<(hidden.second?1:0)<<"\n";
-    file.close();
-    if(file) rename(temporary.c_str(),path.c_str());
+    std::vector<std::pair<std::string,std::string>> values=accessibility_.entries();
+    std::istringstream lines(file.str());
+    std::string line;
+    while(std::getline(lines,line)){
+        const size_t equal=line.find('=');
+        if(equal!=std::string::npos)values.emplace_back(line.substr(0,equal),line.substr(equal+1));
+    }
+    accessibility::updateConfig(path,values,{"list_order_","cartridge_scale","hidden_system_","a11y_simple_navigation"});
 }
 
 void Launcher::reloadBackgroundChoices(){
@@ -1336,8 +1628,8 @@ bool Launcher::selectBackground(int direction){
 void Launcher::changeSetting(int direction){
     const int systemCount=static_cast<int>(systems_.size());
     bool systemVisibilityChanged=false;
-    if(settingsSelection_>=11){
-        const int systemSetting=settingsSelection_-11;
+    if(settingsSelection_>=kGeneralSettingsCount){
+        const int systemSetting=settingsSelection_-kGeneralSettingsCount;
         const int systemIndex=systemSetting/2;
         if(systemIndex>=0 && systemIndex<systemCount){
             const std::string& id=systems_[static_cast<size_t>(systemIndex)].id;
@@ -1360,7 +1652,14 @@ void Launcher::changeSetting(int direction){
             case 7: startupAnimationEnabled_=!startupAnimationEnabled_; break;
             case 8: selectBackground(direction); break;
             case 9: invertTextColour_=!invertTextColour_; break;
-            case 10:
+            case 10: textBackground_=!textBackground_; break;
+            case 11:
+                restoreBrowserPosition_=!restoreBrowserPosition_;
+                if(!restoreBrowserPosition_) unlink(kBrowserStatePath);
+                break;
+            case 12:
+                restoreBrowserPosition_=false;
+                unlink(kBrowserStatePath);
                 startupAnimationEnabled_=true;
                 for(auto& scale:cartridgeScaleBySystem_) scale.second=1;
                 for(const SystemInfo& system:systems_) cartridgeScaleBySystem_[system.id]=1;
@@ -1368,7 +1667,7 @@ void Launcher::changeSetting(int direction){
                 for(const SystemInfo& system:systems_) hiddenSystemById_[system.id]=false;
                 animationSpeed_=1; carouselSpacing_=1; titleSize_=1;
                 showGameCount_=true; showBatteryLevel_=true; showControlHints_=true;
-                invertTextColour_=false; hideGameTitle_=false;
+                invertTextColour_=false; textBackground_=false; hideGameTitle_=false;
                 backgroundFile_="BG.png";
                 reloadBackgroundChoices();
                 statusMessage_="Settings reset";
@@ -1378,7 +1677,7 @@ void Launcher::changeSetting(int direction){
     }
     saveSettings();
     if(systemVisibilityChanged){
-        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-11)/2)].id);
+        const bool hidden=systemHiddenFor(systems_[static_cast<size_t>((settingsSelection_-kGeneralSettingsCount)/2)].id);
         statusMessage_=hidden?"System hidden":"System shown";
         statusUntil_=SDL_GetTicks64()+1800;
     }
@@ -1386,7 +1685,7 @@ void Launcher::changeSetting(int direction){
 
 void Launcher::moveSettingsSelection(int direction){
     settingsSelection_=wrapIndex(settingsSelection_+direction,settingsRowCount());
-    constexpr int visibleRows=8;
+    const int visibleRows=accessibility_.largeControls?6:8;
     if(settingsSelection_<settingsScrollOffset_)
         settingsScrollOffset_=settingsSelection_;
     else if(settingsSelection_>=settingsScrollOffset_+visibleRows)
@@ -1394,7 +1693,68 @@ void Launcher::moveSettingsSelection(int direction){
 }
 
 int Launcher::settingsRowCount() const{
-    return static_cast<int>(systems_.size())*2+11;
+    return static_cast<int>(systems_.size())*2+kGeneralSettingsCount;
+}
+
+bool Launcher::saveBrowserState(size_t categoryIndex,const std::string& romPath) const{
+    if(!restoreBrowserPosition_) return true; // Disabled: skip the snapshot without blocking launch.
+    if(categoryIndex>=categories_.size() || categories_[categoryIndex].orderKey.empty() || romPath.empty())
+        return false;
+    // Stable identities survive list reordering and alphabetical ROM rescans.
+    std::ostringstream contents;
+    contents<<"CartOSBrowser1\n"<<std::quoted(categories_[categoryIndex].orderKey)<<'\n'
+            <<std::quoted(onionPath(romPath,sdRoot_))<<'\n';
+    const std::string text=contents.str();
+    if(text.size()>16384) return false;
+    const std::string temporary=std::string(kBrowserStatePath)+".tmp";
+    FILE* file=std::fopen(temporary.c_str(),"wb");
+    if(!file) return false;
+    bool saved=std::fwrite(text.data(),1,text.size(),file)==text.size();
+    if(std::fflush(file)!=0 || fsync(fileno(file))!=0) saved=false;
+    if(std::fclose(file)!=0) saved=false;
+    if(saved && rename(temporary.c_str(),kBrowserStatePath)==0) return true;
+    unlink(temporary.c_str());
+    return false;
+}
+
+void Launcher::restoreBrowserState(bool returningFromOnion){
+    // Cold starts and unavailable saved positions always open Recent.
+    categoryIndex_=0;
+    for(size_t c=0;c<categories_.size();++c)
+        if(categories_[c].orderKey=="recent"){categoryIndex_=c;break;}
+    position_=target_=0.0f;
+    if(!restoreBrowserPosition_ || !returningFromOnion){unlink(kBrowserStatePath);return;}
+    struct stat info{};
+    if(stat(kBrowserStatePath,&info)!=0) return;
+    if(!S_ISREG(info.st_mode) || info.st_size<=0 || info.st_size>16384){
+        unlink(kBrowserStatePath);
+        return;
+    }
+    std::ifstream input(kBrowserStatePath,std::ios::binary);
+    std::string header,listKey,romPath;
+    std::getline(input,header);
+    const bool parsed=header=="CartOSBrowser1" && static_cast<bool>(input>>std::quoted(listKey)>>std::quoted(romPath));
+    input>>std::ws;
+    const bool complete=input.eof();
+    input.close();
+    // Each handoff is consumed once; a later manual launch must not reuse it.
+    unlink(kBrowserStatePath);
+    if(!parsed || !complete || listKey.empty() || romPath.empty()) return;
+    const std::string expected=comparableRomPath(romPath,sdRoot_);
+    for(size_t c=0;c<categories_.size();++c){
+        const Category& category=categories_[c];
+        if(category.orderKey!=listKey || systemHiddenFor(category.systemId)) continue;
+        for(size_t i=0;i<category.entries.size();++i){
+            const Game& game=category.entries[i];
+            if(game.kind!=EntryKind::Game || comparableRomPath(game.romPath,sdRoot_)!=expected) continue;
+            categoryIndex_=c;
+            position_=target_=static_cast<float>(i);
+            if(c<rememberedSelections_.size()) rememberedSelections_[c]=static_cast<int>(i);
+            std::fprintf(stdout,"Restored CartOS browser: %s, %s\n",listKey.c_str(),romPath.c_str());
+            return;
+        }
+        return;
+    }
 }
 
 void Launcher::openOnionGameSwitcher(){
@@ -1423,6 +1783,14 @@ void Launcher::openOnionGameSwitcher(){
     }
     fsync(returnFlag);
     close(returnFlag);
+    if(const Category* category=currentCategory()){
+        if(!category->entries.empty()){
+            const size_t selected=static_cast<size_t>(wrapIndex(static_cast<int>(std::lround(position_)),
+                static_cast<int>(category->entries.size())));
+            if(category->entries[selected].kind==EntryKind::Game)
+                saveBrowserState(categoryIndex_,category->entries[selected].romPath);
+        }
+    }
     // OnionOS reads the handoff markers as soon as CartOS exits. Flush both
     // directory entries before leaving, especially on the first cold launch.
     sync();
@@ -1471,6 +1839,10 @@ void Launcher::launchGame(const Game& entry){
         ?workingDirectory:workingDirectory.substr(appFolderSlash+1);
     const bool musicPlayer=kind==EntryKind::App &&
         (lower(entry.title)=="music player" || lower(appFolder)=="gmu");
+    if(kind==EntryKind::App && regularFile(launcher) && !rememberRecentLaunch(entry))
+        std::fprintf(stderr,"Could not save CartOS recent app\n");
+    if(kind==EntryKind::Game && !saveBrowserState(launchAnimationCategory_,entry.romPath))
+        std::fprintf(stderr,"Could not save CartOS browser position\n");
     shutdown();
     if(kind==EntryKind::Game){
         // Replace this app's pending Onion command with a native game command.
@@ -1531,6 +1903,7 @@ void Launcher::launchGame(const Game& entry){
             _exit(127);
         }
         close(quickSwitch);
+        if(!rememberRecentLaunch(entry)) std::fprintf(stderr,"Could not save CartOS recent game\n");
         std::fprintf(stdout,"Queued OnionOS game command: %s\n",launcher.c_str());
         std::fflush(stdout);
         _exit(0);
@@ -1872,12 +2245,12 @@ void Launcher::deleteSelectedList(){
 
 void Launcher::refreshAll(){
     std::string priorCategory;
-    std::string priorRom;
+    std::string priorEntry;
     if(const Category* category=currentCategory()){
         priorCategory=category->label;
         if(!category->entries.empty()){
             const int index=wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(category->entries.size()));
-            priorRom=category->entries[static_cast<size_t>(index)].romPath;
+            priorEntry=recentEntryKey(category->entries[static_cast<size_t>(index)],sdRoot_);
         }
     }
     for(Category& category:categories_) clearArtwork(category.entries);
@@ -1885,16 +2258,16 @@ void Launcher::refreshAll(){
     rememberedSelections_.clear();
     categoryIndex_=0;
     position_=target_=0.0f;
-    discoverGames();
+    discoverGames(true);
     // X explicitly rebuilds every active system, even indexes not opened yet.
     for(const SystemInfo& system:systems_) artworkIndexFor(system,true);
     reloadBackgroundChoices();
     for(size_t c=0;c<categories_.size();++c){
         if(categories_[c].label!=priorCategory) continue;
         categoryIndex_=c;
-        if(!priorRom.empty()){
+        if(!priorEntry.empty()){
             for(size_t i=0;i<categories_[c].entries.size();++i){
-                if(comparableRomPath(categories_[c].entries[i].romPath,sdRoot_)==comparableRomPath(priorRom,sdRoot_)){
+                if(recentEntryKey(categories_[c].entries[i],sdRoot_)==priorEntry){
                     position_=target_=static_cast<float>(i);
                     rememberedSelections_[c]=static_cast<int>(i);
                     break;
@@ -1923,6 +2296,8 @@ void Launcher::deleteSelectedGame(){
         overlay_=Overlay::None;
         return;
     }
+    // A deleted ROM must not reappear from the next boot's saved catalog.
+    unlink((sdRoot_+kGameCatalogPath).c_str());
     const std::string target=comparableRomPath(game.romPath,sdRoot_);
     std::vector<std::string> manifests{sdRoot_+"/Roms/favourite.json",sdRoot_+"/Roms/recentlist.json"};
     for(const std::string& name:customListNames()) manifests.push_back(collectionPath(name));
@@ -1949,7 +2324,9 @@ void Launcher::startSearch(){
 
 void Launcher::updateSearchResults(){
     searchResults_.clear();
-    std::vector<std::string> seen;
+    searchResultSelection_=0;
+    std::array<std::vector<std::pair<size_t,size_t>>,3> ranked;
+    std::unordered_set<std::string> seen;
     const std::string query=lower(searchQuery_);
     // An empty query is the search screen's recent-games view. Do not treat an
     // empty substring as matching the entire ROM library: that also exposes
@@ -1965,18 +2342,30 @@ void Launcher::updateSearchResults(){
     for(size_t c=firstCategory;c<lastCategory;++c){
         for(size_t i=0;i<categories_[c].entries.size();++i){
             const Game& game=categories_[c].entries[i];
-            if(game.kind!=EntryKind::Game || game.title.empty() || lower(game.title).find(query)==std::string::npos) continue;
+            if(game.kind!=EntryKind::Game || game.title.empty()) continue;
+            const std::string title=lower(game.title);
+            size_t match=title.find(query);
+            if(match==std::string::npos) continue;
+            const std::string key=comparableRomPath(game.romPath,sdRoot_);
+            if(seen.find(key)!=seen.end()) continue;
             // Search can outlive edits made from OnionOS or the computer while
             // CartOS stays open. Hide ROMs removed since the library scan.
             if(!regularFile(game.romPath)) continue;
-            const std::string key=comparableRomPath(game.romPath,sdRoot_);
-            if(std::find(seen.begin(),seen.end(),key)!=seen.end()) continue;
-            seen.push_back(key);
-            searchResults_.push_back({c,i});
+            seen.insert(key);
+            int rank=2;
+            for(;match!=std::string::npos;match=title.find(query,match+1)){
+                if(match==0){rank=0;break;}
+                if(!std::isalnum(static_cast<unsigned char>(title[match-1]))){rank=1;break;}
+            }
+            ranked[rank].push_back({c,i});
         }
     }
-    if(searchResults_.empty()) searchResultSelection_=0;
-    else searchResultSelection_=wrapIndex(searchResultSelection_,static_cast<int>(searchResults_.size()));
+    for(const auto& group:ranked) searchResults_.insert(searchResults_.end(),group.begin(),group.end());
+}
+
+void Launcher::moveSearchSelection(int direction){
+    if(searchResults_.empty()){searchResultSelection_=0;return;}
+    searchResultSelection_=wrapIndex(searchResultSelection_+direction,static_cast<int>(searchResults_.size()));
 }
 
 void Launcher::handleSearchInput(const SDL_Event& e){
@@ -2072,6 +2461,49 @@ void Launcher::launchSearchSelected(){
     beginLaunchAnimation(ref.first,ref.second);
 }
 
+std::vector<std::pair<size_t,size_t>> Launcher::randomGameCandidates() const{
+    std::vector<std::pair<size_t,size_t>> candidates;
+    std::unordered_set<std::string> seen;
+    for(size_t c=0;c<categories_.size();++c){
+        const Category& category=categories_[c];
+        // System libraries contain the whole device library, including hidden
+        // systems. Recent and saved-list copies must not bias the selection.
+        if(category.systemId.empty()) continue;
+        for(size_t i=0;i<category.entries.size();++i){
+            const Game& game=category.entries[i];
+            if(game.kind!=EntryKind::Game || game.romPath.empty() || game.launcherPath.empty() ||
+               isUtilityEntry(game.title,game.romPath)) continue;
+            if(seen.insert(comparableRomPath(game.romPath,sdRoot_)).second)
+                candidates.emplace_back(c,i);
+        }
+    }
+    return candidates;
+}
+
+void Launcher::playRandomGame(){
+    const auto candidates=randomGameCandidates();
+    overlay_=Overlay::None;
+    if(candidates.empty()){
+        statusMessage_="No games available";
+        statusUntil_=SDL_GetTicks64()+2200;
+        return;
+    }
+    // Seed once per process, and give every unique ROM an equal chance.
+    static std::mt19937 generator(static_cast<unsigned int>(SDL_GetPerformanceCounter()) ^
+        static_cast<unsigned int>(std::time(nullptr)) ^ static_cast<unsigned int>(getpid()));
+    const auto selected=candidates[std::uniform_int_distribution<size_t>(0,candidates.size()-1)(generator)];
+    if(const Category* category=currentCategory()){
+        if(!category->entries.empty() && categoryIndex_<rememberedSelections_.size())
+            rememberedSelections_[categoryIndex_]=wrapIndex(static_cast<int>(std::lround(position_)),
+                static_cast<int>(category->entries.size()));
+    }
+    categoryIndex_=selected.first;
+    position_=target_=static_cast<float>(selected.second);
+    if(categoryIndex_<rememberedSelections_.size())
+        rememberedSelections_[categoryIndex_]=static_cast<int>(selected.second);
+    launchSelected();
+}
+
 void Launcher::activateSelectMenu(){
     if(overlaySelection_<0 || static_cast<size_t>(overlaySelection_)>=menuOptions_.size()) return;
     const std::string action=menuOptions_[static_cast<size_t>(overlaySelection_)];
@@ -2101,14 +2533,7 @@ void Launcher::activateSelectMenu(){
         playtimeLookupRom_.clear();
         overlay_=Overlay::GameInfo;
     }else if(action=="Play random game"){
-        Category* category=currentCategory();
-        if(category && !category->entries.empty()){
-            const int index=std::rand()%static_cast<int>(category->entries.size());
-            position_=target_=static_cast<float>(index);
-            rememberedSelections_[categoryIndex_]=index;
-            overlay_=Overlay::None;
-            launchSelected();
-        }
+        playRandomGame();
     }else if(action=="Delete game"){
         overlaySelection_=1;
         overlay_=Overlay::DeleteConfirm;
@@ -2118,7 +2543,16 @@ void Launcher::activateSelectMenu(){
     }
 }
 
-void Launcher::handle(const SDL_Event& e){
+void Launcher::handle(const SDL_Event& physical){
+    // The backend emits raw joystick events as well as mapped controller
+    // events. Process one stream only, so one press never acts twice.
+    if(controller_ && (physical.type==SDL_JOYBUTTONDOWN || physical.type==SDL_JOYBUTTONUP ||
+       physical.type==SDL_JOYHATMOTION || physical.type==SDL_JOYAXISMOTION))return;
+    // Y is a search control on the handheld, but a printable character on a
+    // desktop keyboard. Let SDL text input deliver it while Search is open.
+    const bool typingSearchY=overlay_==Overlay::Search &&
+        physical.type==SDL_KEYDOWN && physical.key.keysym.sym==SDLK_y;
+    const SDL_Event e=typingSearchY?physical:accessibility::translate(physical,accessibility_);
     if(e.type==SDL_QUIT){running_=false;return;}
     if(e.type==SDL_KEYUP){
         switch(e.key.keysym.sym){
@@ -2150,6 +2584,8 @@ void Launcher::handle(const SDL_Event& e){
     // keymon reads the physical buttons separately and still sees the shortcut.
     if(e.type==SDL_WINDOWEVENT && e.window.event==SDL_WINDOWEVENT_FOCUS_LOST){
         selectButtonHeld_=selectButtonChord_=selectOptionsPending_=false;
+        startButtonHeld_=startButtonChord_=false;
+        scrollHeld_.fill(false);
     }
     const bool selectKey=(e.type==SDL_KEYDOWN || e.type==SDL_KEYUP) &&
         (e.key.keysym.sym==SDLK_RSHIFT || e.key.keysym.sym==SDLK_RCTRL);
@@ -2160,6 +2596,17 @@ void Launcher::handle(const SDL_Event& e){
         e.jbutton.button==12; // MMIYOO_BUTTON_SELECT in the bundled SDL backend
     const bool buttonDown=e.type==SDL_KEYDOWN || e.type==SDL_CONTROLLERBUTTONDOWN ||
         (e.type==SDL_JOYBUTTONDOWN && !controller_);
+    const bool startEvent=((e.type==SDL_CONTROLLERBUTTONDOWN || e.type==SDL_CONTROLLERBUTTONUP) && e.cbutton.button==SDL_CONTROLLER_BUTTON_START) ||
+        ((e.type==SDL_KEYDOWN || e.type==SDL_KEYUP) && e.key.keysym.sym==SDLK_RETURN) ||
+        (!controller_ && (e.type==SDL_JOYBUTTONDOWN || e.type==SDL_JOYBUTTONUP) && e.jbutton.button==13);
+    if(selectButtonHeld_ && startEvent && buttonDown){
+        // Physical SELECT+START always recovers controls, independent of maps.
+        selectButtonChord_=true;startButtonHeld_=false;
+        accessibility_.resetBindings();const bool saved=saveAccessibility();
+        resetPreviewArtwork();launchAnimation_=launchAwaitingConfirm_=launchReversing_=launchConfirmationOpen_=false;
+        openAccessibility();statusMessage_=saved?"Default controls restored":"Controls restored (could not save)";statusUntil_=SDL_GetTicks64()+2200;
+        return;
+    }
     if(selectKey || selectController || selectJoystick){
         if(buttonDown){
             if(!selectButtonHeld_){
@@ -2175,7 +2622,7 @@ void Launcher::handle(const SDL_Event& e){
             const bool showOptions=selectButtonHeld_ && selectOptionsPending_ && !selectButtonChord_ &&
                 overlay_==Overlay::None && !launchAnimation_;
             selectButtonHeld_=selectButtonChord_=selectOptionsPending_=false;
-            if(showOptions) openSelectMenu();
+            if(showOptions){openSelectMenu();noteInput("OPTIONS");}
             return;
         }
     }else if(selectButtonHeld_){
@@ -2187,6 +2634,80 @@ void Launcher::handle(const SDL_Event& e){
             return;
         }
         if(e.type==SDL_TEXTINPUT) return;
+    }
+    if(!controller_ && (e.type==SDL_JOYBUTTONDOWN || e.type==SDL_JOYBUTTONUP) && e.jbutton.button==14){
+        if(e.type==SDL_JOYBUTTONDOWN){if(!menuButtonHeld_)beginMenuPress();}else endMenuPress();
+        return;
+    }
+    const auto isMenuButton=[](Uint8 button){
+        return button==SDL_CONTROLLER_BUTTON_GUIDE || button==SDL_CONTROLLER_BUTTON_MISC1;
+    };
+    if(e.type==SDL_CONTROLLERBUTTONDOWN && isMenuButton(e.cbutton.button)){
+        if(!menuButtonHeld_) beginMenuPress();
+        return;
+    }
+    if(e.type==SDL_CONTROLLERBUTTONUP && isMenuButton(e.cbutton.button)){
+        endMenuPress();
+        return;
+    }
+    if(e.type==SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym==SDLK_MENU || e.key.keysym.sym==SDLK_HOME
+#if defined(LAUNCHER_DEVICE)
+        || e.key.keysym.sym==SDLK_ESCAPE
+#endif
+        )){
+        if(!menuButtonHeld_) beginMenuPress();
+        return;
+    }
+    if(e.type==SDL_KEYUP && (e.key.keysym.sym==SDLK_MENU || e.key.keysym.sym==SDLK_HOME
+#if defined(LAUNCHER_DEVICE)
+        || e.key.keysym.sym==SDLK_ESCAPE
+#endif
+        )){
+        endMenuPress();
+        return;
+    }
+    if(menuButtonHeld_){
+        const bool movedAxis=(e.type==SDL_CONTROLLERAXISMOTION && std::abs(e.caxis.value)>8000) ||
+            (e.type==SDL_JOYAXISMOTION && std::abs(e.jaxis.value)>8000);
+        const bool movedHat=e.type==SDL_JOYHATMOTION && e.jhat.value!=SDL_HAT_CENTERED;
+        if(buttonDown || movedAxis || movedHat)menuButtonChord_=true;
+        return;
+    }
+    if(startButtonHeld_){
+        if(startEvent && !buttonDown){
+            const bool launch=!startButtonChord_ && !menuButtonHeld_ && !selectButtonHeld_;
+            startButtonHeld_=startButtonChord_=false;
+            if(launch)launchSelected(true);
+            return;
+        }
+        const bool axis=(e.type==SDL_CONTROLLERAXISMOTION && std::abs(e.caxis.value)>8000) ||
+            (e.type==SDL_JOYAXISMOTION && std::abs(e.jaxis.value)>8000);
+        if((buttonDown && !startEvent) || axis || (e.type==SDL_JOYHATMOTION && e.jhat.value)){
+            startButtonChord_=true;return;
+        }
+    }
+    if(startEvent && buttonDown && overlay_==Overlay::None && !launchAnimation_ && !menuButtonHeld_){
+        startButtonHeld_=true;startButtonChord_=false;scrollHeld_.fill(false);noteInput("START");return;
+    }
+    if(buttonDown && !selectKey && !selectController && !selectJoystick && !menuButtonHeld_){
+        const int action=accessibility::physicalButton(e);
+        if(action>=0)noteInput(accessibility::actionName(action));
+    }
+    if(launchConfirmationOpen_){
+        if(e.type==SDL_CONTROLLERBUTTONDOWN){
+            const Uint8 b=e.cbutton.button;
+            if(b==SDL_CONTROLLER_BUTTON_B)cancelLaunchConfirmation();
+            else if(b==SDL_CONTROLLER_BUTTON_DPAD_UP || b==SDL_CONTROLLER_BUTTON_DPAD_DOWN ||
+                    b==SDL_CONTROLLER_BUTTON_DPAD_LEFT || b==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)launchConfirmationSelection_=1-launchConfirmationSelection_;
+            else if(b==SDL_CONTROLLER_BUTTON_A){
+                if(launchConfirmationSelection_==0)commitGameLaunch();
+                else cancelLaunchConfirmation();
+            }
+        }else if(e.type==SDL_KEYDOWN && !e.key.repeat){
+            if(e.key.keysym.sym==SDLK_ESCAPE)cancelLaunchConfirmation();
+            else if(e.key.keysym.sym==SDLK_RETURN){if(launchConfirmationSelection_==0)commitGameLaunch();else cancelLaunchConfirmation();}
+        }
+        return;
     }
     if(launchAnimation_){
         const bool confirmPressed=(e.type==SDL_CONTROLLERBUTTONDOWN && e.cbutton.button==SDL_CONTROLLER_BUTTON_A) ||
@@ -2203,9 +2724,7 @@ void Launcher::handle(const SDL_Event& e){
                                 (e.type==SDL_JOYHATMOTION && (e.jhat.value&SDL_HAT_RIGHT)!=0);
         if(launchAwaitingConfirm_){
             if(confirmPressed){
-                resetPreviewArtwork();
-                launchAwaitingConfirm_=false;
-                launchStepTwoConfirmed_=true;
+                requestGameLaunch();
             }else if(previewLeft){
                 browsePreviewPage(-1);
             }else if(previewRight){
@@ -2216,56 +2735,21 @@ void Launcher::handle(const SDL_Event& e){
                 // so B never briefly shows an alternate image in the browser.
                 resetPreviewArtwork();
                 launchAwaitingConfirm_=false;
-                launchReversing_=true;
+                launchReversing_=!accessibility_.reducedMotion;
+                if(accessibility_.reducedMotion)launchAnimation_=false;
                 launchReverseElapsed_=0.0f;
                 launchStepTwoConfirmed_=false;
-                if(launchCenterDuration_>0.0f){
-                    // The reverse should end at the centered browser position.
-                    // Keep the selected cartridge anchored while the entrance
-                    // plays backward, avoiding a return to the pre-launch
-                    // fractional offset followed by a second settling motion.
-                    const float distance=std::fabs(position_-launchCenteringPosition_);
-                    const float offCenterBase=(280.0f-95.0f*std::min(1.0f,distance))/280.0f;
-                    launchReverseStartScale_=1.34f*offCenterBase;
-                    position_=launchCenteringPosition_;
-                    target_=launchCenteringPosition_;
-                    launchCenteringOffset_=0.0f;
-                }else{
-                    // Search's ordinary cartridge is 220 px wide; its launch
-                    // view begins at the 280 px browser size before enlarging.
-                    launchReverseStartScale_=(280.0f/220.0f)*1.34f;
-                }
+                if(overlay_!=Overlay::Search)position_=target_=launchCenteringPosition_;
+                launchCenteringOffset_=0.0f;
             }
         }else if(confirmPressed && !launchReversing_ &&
                  SDL_GetTicks64()-launchFirstPressAt_<=kLaunchDoubleTapWindowMs){
-            launchStepTwoConfirmed_=true;
+            requestGameLaunch();
         }
         return;
     }
 
-    const auto isMenuButton=[](Uint8 button){
-        return button==SDL_CONTROLLER_BUTTON_GUIDE || button==SDL_CONTROLLER_BUTTON_MISC1;
-    };
-    if(e.type==SDL_CONTROLLERBUTTONDOWN && isMenuButton(e.cbutton.button)){
-        if(!menuButtonHeld_) beginMenuPress();
-        return;
-    }
-    if(e.type==SDL_CONTROLLERBUTTONUP && isMenuButton(e.cbutton.button)){
-        endMenuPress();
-        return;
-    }
-    if(e.type==SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym==SDLK_MENU || e.key.keysym.sym==SDLK_HOME)){
-        if(!menuButtonHeld_) beginMenuPress();
-        return;
-    }
-    if(e.type==SDL_KEYUP && (e.key.keysym.sym==SDLK_MENU || e.key.keysym.sym==SDLK_HOME)){
-        endMenuPress();
-        return;
-    }
-    if(menuButtonHeld_ && ((e.type==SDL_CONTROLLERBUTTONDOWN && !isMenuButton(e.cbutton.button)) ||
-                           e.type==SDL_CONTROLLERAXISMOTION ||
-                           (e.type==SDL_KEYDOWN && !e.key.repeat)))
-        menuButtonChord_=true;
+    if(handleAccessibilityOverlay(e))return;
 
     if(overlay_==Overlay::Search){
         if(e.type==SDL_TEXTINPUT){if(!searchResultsFocused_)handleSearchInput(e);return;}
@@ -2280,15 +2764,13 @@ void Launcher::handle(const SDL_Event& e){
                 else if(key==SDLK_LEFT || key==SDLK_a) virtualKey_=std::max(0,virtualKey_-1);
                 else if(key==SDLK_RIGHT || key==SDLK_d) virtualKey_=std::min(39,virtualKey_+1);
                 else if(key==SDLK_x)refreshAll();
-                else if(key==SDLK_y) searchResultsFocused_=true;
             }else{
-                if(key==SDLK_LEFT || key==SDLK_a) --searchResultSelection_;
-                else if(key==SDLK_RIGHT || key==SDLK_d) ++searchResultSelection_;
-                else if(key==SDLK_UP || key==SDLK_w) --searchResultSelection_;
-                else if(key==SDLK_DOWN || key==SDLK_s) ++searchResultSelection_;
+                if(key==SDLK_LEFT || key==SDLK_a) moveSearchSelection(-1);
+                else if(key==SDLK_RIGHT || key==SDLK_d) moveSearchSelection(1);
+                else if(key==SDLK_UP || key==SDLK_w) moveSearchSelection(-1);
+                else if(key==SDLK_DOWN || key==SDLK_s) moveSearchSelection(1);
                 else if(key==SDLK_RETURN) launchSearchSelected();
                 else if(key==SDLK_ESCAPE || key==SDLK_BACKSPACE || key==SDLK_TAB) searchResultsFocused_=false;
-                else if(key==SDLK_y) searchResultsFocused_=false;
             }
             return;
         }
@@ -2299,7 +2781,7 @@ void Launcher::handle(const SDL_Event& e){
                 else if(!searchQuery_.empty()){searchQuery_.pop_back();updateSearchResults();}
                 else {SDL_StopTextInput();overlay_=Overlay::None;}
             }else if(button==SDL_CONTROLLER_BUTTON_X)refreshAll();
-            else if(button==SDL_CONTROLLER_BUTTON_Y) searchResultsFocused_=!searchResultsFocused_;
+            else if(button==SDL_CONTROLLER_BUTTON_Y){SDL_StopTextInput();overlay_=Overlay::None;}
             else if(button==SDL_CONTROLLER_BUTTON_START) searchResultsFocused_=true;
             else if(button==SDL_CONTROLLER_BUTTON_A){
                 if(searchResultsFocused_) launchSearchSelected();
@@ -2307,10 +2789,10 @@ void Launcher::handle(const SDL_Event& e){
                     searchQuery_.push_back(searchKeyboardCharacter(virtualKey_));
                     updateSearchResults();
                 }
-            }else if(button==SDL_CONTROLLER_BUTTON_DPAD_LEFT){if(searchResultsFocused_)--searchResultSelection_;else virtualKey_=std::max(0,virtualKey_-1);}
-            else if(button==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){if(searchResultsFocused_)++searchResultSelection_;else virtualKey_=std::min(39,virtualKey_+1);}
-            else if(button==SDL_CONTROLLER_BUTTON_DPAD_UP){if(searchResultsFocused_)--searchResultSelection_;else virtualKey_=std::max(0,virtualKey_-10);}
-            else if(button==SDL_CONTROLLER_BUTTON_DPAD_DOWN){if(searchResultsFocused_)++searchResultSelection_;else virtualKey_=std::min(39,virtualKey_+10);}
+            }else if(button==SDL_CONTROLLER_BUTTON_DPAD_LEFT){if(searchResultsFocused_)moveSearchSelection(-1);else virtualKey_=std::max(0,virtualKey_-1);}
+            else if(button==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){if(searchResultsFocused_)moveSearchSelection(1);else virtualKey_=std::min(39,virtualKey_+1);}
+            else if(button==SDL_CONTROLLER_BUTTON_DPAD_UP){if(searchResultsFocused_)moveSearchSelection(-1);else virtualKey_=std::max(0,virtualKey_-10);}
+            else if(button==SDL_CONTROLLER_BUTTON_DPAD_DOWN){if(searchResultsFocused_)moveSearchSelection(1);else virtualKey_=std::min(39,virtualKey_+10);}
             else if(button==SDL_CONTROLLER_BUTTON_BACK){SDL_StopTextInput();overlay_=Overlay::None;}
             return;
         }
@@ -2318,14 +2800,14 @@ void Launcher::handle(const SDL_Event& e){
             const int button=e.jbutton.button;
             if(button==5){if(searchResultsFocused_)searchResultsFocused_=false;else if(!searchQuery_.empty()){searchQuery_.pop_back();updateSearchResults();}else{SDL_StopTextInput();overlay_=Overlay::None;}}
             else if(button==6)refreshAll();
-            else if(button==7)searchResultsFocused_=!searchResultsFocused_;
+            else if(button==7){SDL_StopTextInput();overlay_=Overlay::None;}
             else if(button==4){if(searchResultsFocused_)launchSearchSelected();else{searchQuery_.push_back(searchKeyboardCharacter(virtualKey_));updateSearchResults();}}
             else if(button==10)searchResultsFocused_=true;
             else if(button==8){SDL_StopTextInput();overlay_=Overlay::None;}
             return;
         }
         if(e.type==SDL_JOYHATMOTION && !controller_){
-            if(searchResultsFocused_){if(e.jhat.value&SDL_HAT_LEFT)--searchResultSelection_;else if(e.jhat.value&SDL_HAT_RIGHT)++searchResultSelection_;}
+            if(searchResultsFocused_){if(e.jhat.value&SDL_HAT_LEFT)moveSearchSelection(-1);else if(e.jhat.value&SDL_HAT_RIGHT)moveSearchSelection(1);}
             else if(e.jhat.value&SDL_HAT_LEFT)virtualKey_=std::max(0,virtualKey_-1);else if(e.jhat.value&SDL_HAT_RIGHT)virtualKey_=std::min(39,virtualKey_+1);else if(e.jhat.value&SDL_HAT_UP)virtualKey_=std::max(0,virtualKey_-10);else if(e.jhat.value&SDL_HAT_DOWN)virtualKey_=std::min(39,virtualKey_+10);
             return;
         }
@@ -2379,11 +2861,10 @@ void Launcher::handle(const SDL_Event& e){
         else if(e.type==SDL_CONTROLLERBUTTONDOWN){
             const Uint8 button=e.cbutton.button;
             if(overlay_==Overlay::CreateList){
-                static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};
                 if(button==SDL_CONTROLLER_BUTTON_B){SDL_StopTextInput();overlay_=Overlay::None;}
                 else if(button==SDL_CONTROLLER_BUTTON_X){if(!newListName_.empty())newListName_.pop_back();}
                 else if(button==SDL_CONTROLLER_BUTTON_START)createList();
-                else if(button==SDL_CONTROLLER_BUTTON_A){const char value=keys[std::min(3,virtualKey_/10)][static_cast<size_t>(virtualKey_%10)];if(value!=' ')newListName_.push_back(value);}
+                else if(button==SDL_CONTROLLER_BUTTON_A)newListName_.push_back(searchKeyboardCharacter(virtualKey_));
                 else if(button==SDL_CONTROLLER_BUTTON_DPAD_LEFT)virtualKey_=std::max(0,virtualKey_-1);
                 else if(button==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)virtualKey_=std::min(39,virtualKey_+1);
                 else if(button==SDL_CONTROLLER_BUTTON_DPAD_UP)virtualKey_=std::max(0,virtualKey_-10);
@@ -2445,8 +2926,8 @@ void Launcher::handle(const SDL_Event& e){
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: setScrollHeld(1,true); break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP: setScrollHeld(2,true); break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN: setScrollHeld(3,true); break;
-            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: skipLetter(-1); break;
-            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: skipLetter(1); break;
+            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: skipLetter(-1); noteInput("PREVIOUS LETTER"); break;
+            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: skipLetter(1); noteInput("NEXT LETTER"); break;
             case SDL_CONTROLLER_BUTTON_A: launchSelected(); break;
             case SDL_CONTROLLER_BUTTON_START: launchSelected(true); break;
             case SDL_CONTROLLER_BUTTON_B: break;
@@ -2485,6 +2966,7 @@ void Launcher::handle(const SDL_Event& e){
 
 namespace {
 void arrow(SDL_Renderer* renderer,int x,int y,bool pointsUp,SDL_Color color){
+    color=draw::foreground(color);
     SDL_SetRenderDrawColor(renderer,color.r,color.g,color.b,color.a);
     if(pointsUp){
         SDL_RenderDrawLine(renderer,x,y+8,x,y+2);
@@ -2498,11 +2980,16 @@ void arrow(SDL_Renderer* renderer,int x,int y,bool pointsUp,SDL_Color color){
 }
 
 void fillRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color){
+    const bool selected=(color.r==32 && color.g==50 && color.b==72) ||
+        (color.r==39 && color.g==64 && color.b==90) || (color.r==41 && color.g==70 && color.b==98);
+    color=draw::panelColor(color);
     SDL_SetRenderDrawColor(renderer,color.r,color.g,color.b,color.a);
     SDL_RenderFillRect(renderer,&rect);
+    if(selected)draw::selection(renderer,rect);
 }
 
 void outlineRect(SDL_Renderer* renderer,const SDL_Rect& rect,SDL_Color color){
+    color=draw::foreground(color);
     SDL_SetRenderDrawColor(renderer,color.r,color.g,color.b,color.a);
     SDL_RenderDrawRect(renderer,&rect);
 }
@@ -2519,6 +3006,10 @@ void Launcher::render(float dt){
         batteryPercent_=readBatteryPercent();
         batteryPollAt_=now;
     }
+    applyAccessibility();
+    draw::textBackground(textBackground_,invertTextColour_ && overlay_==Overlay::None);
+    draw::suppressTextBackground(false);
+    if(overlay_==Overlay::Accessibility || overlay_==Overlay::AccessibilityResetConfirm){renderAccessibility();return;}
     if(overlay_==Overlay::Search){renderSearch();return;}
     Category* category=currentCategory();
     if(!category || category->entries.empty()){
@@ -2540,27 +3031,26 @@ void Launcher::render(float dt){
                 const std::string item=(static_cast<int>(i)==overlaySelection_?"> ":"  ")+menuOptions_[i];
                 draw::text(renderer_,(kDesignW-draw::textWidth(item,22))/2,238+static_cast<int>(i)*38,item,22,static_cast<int>(i)==overlaySelection_?SDL_Color{145,205,255,255}:white);
             }
-            const std::string footer="A SELECT   B BACK";
+            const std::string footer=controlHints("A SELECT   B BACK");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,16))/2,347,footer,16,muted);
             SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);
         }else if(overlay_==Overlay::CreateList){
             SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
-            fillRect(renderer_,SDL_Rect{58,85,636,390},{4,7,15,238});
-            outlineRect(renderer_,SDL_Rect{58,85,636,390},{70,82,100,255});
+            fillRect(renderer_,SDL_Rect{58,85,636,overlay_==Overlay::Settings && accessibility_.textSize==2?418:390},{4,7,15,238});
+            outlineRect(renderer_,SDL_Rect{58,85,636,overlay_==Overlay::Settings && accessibility_.textSize==2?418:390},{70,82,100,255});
             draw::text(renderer_,(kDesignW-draw::textWidth("CREATE NEW LIST",27))/2,105,"CREATE NEW LIST",27,white);
             const std::string name=newListName_.empty()?"TYPE A NAME":"NAME: "+newListName_;
             draw::text(renderer_,(kDesignW-draw::textWidth(name,23))/2,153,name,23,{145,205,255,255});
-            static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};
             for(int row=0;row<4;++row) for(int col=0;col<10;++col){
                 const int index=row*10+col;
-                const SDL_Rect keyRect{116+col*53,204+row*42,45,32};
+                const SDL_Rect keyRect{116+col*53,204+row*42,45,accessibility_.largeControls?38:32};
                 if(index==virtualKey_)fillRect(renderer_,keyRect,{41,70,98,255});
                 outlineRect(renderer_,keyRect,index==virtualKey_?SDL_Color{145,205,255,255}:SDL_Color{55,63,76,255});
-                const char letter=keys[row][static_cast<size_t>(col)];
-                const std::string caption=letter==' '?"·":std::string(1,letter);
+                const char letter=searchKeyboardCharacter(index);
+                const std::string caption=letter==' '?"SPC":std::string(1,letter);
                 draw::text(renderer_,keyRect.x+(keyRect.w-draw::textWidth(caption,17))/2,keyRect.y+7,caption,17,index==virtualKey_?SDL_Color{145,205,255,255}:white);
             }
-            const std::string footer="A ADD   X BACKSPACE   START CREATE   B CANCEL";
+            const std::string footer=controlHints("A ADD   X BACKSPACE   START CREATE   B CANCEL");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,425,footer,15,muted);
             SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);
         }else if(overlay_==Overlay::DeleteListConfirm){
@@ -2573,17 +3063,19 @@ void Launcher::render(float dt){
             draw::text(renderer_,(kDesignW-draw::textWidth("Games stay on the SD card.",17))/2,268,"Games stay on the SD card.",17,muted);
             const std::array<std::string,2> choices{{"DELETE LIST","CANCEL"}};
             for(int i=0;i<2;++i){const SDL_Rect row{202,300+i*44,348,36};if(i==overlaySelection_)fillRect(renderer_,row,{32,50,72,255});draw::text(renderer_,(kDesignW-draw::textWidth(choices[static_cast<size_t>(i)],20))/2,row.y+5,choices[static_cast<size_t>(i)],20,i==overlaySelection_?SDL_Color{145,205,255,255}:white);}
-            const std::string footer="UP/DOWN CHOOSE   A CONFIRM   B CANCEL";
+            const std::string footer=controlHints("UP/DOWN CHOOSE   A CONFIRM   B CANCEL");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,374,footer,15,muted);
             SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_NONE);
         }
-        SDL_RenderPresent(renderer_);
+        presentFrame();
         return;
     }
 
+    const bool accessibleLayout=accessibility_.textSize==2 || accessibility_.largeArtwork || accessibility_.largeControls;
     std::vector<Game>& entries=category->entries;
     // Settle the carousel quickly enough that held-key repeats do not stack
     // multiple moving cartridge positions on the Miyoo LCD.
+    if(accessibility_.reducedMotion && !launchAnimation_)position_=target_;
     if(!launchAnimation_) position_+=(target_-position_)*(1.0f-std::exp(-dt*28.0f));
     const int entryCount=static_cast<int>(entries.size());
     const float count=static_cast<float>(entryCount);
@@ -2615,12 +3107,9 @@ void Launcher::render(float dt){
         }
         const float delta=static_cast<float>(candidate)-position_;
         const float distance=std::fabs(delta);
-        float scale=1.0f;
         const float spacing=carouselSpacing_==0?215.0f:(carouselSpacing_==2?255.0f:240.0f);
         int cx=kDesignW/2+static_cast<int>(delta*spacing);
         int cy=254;
-        float liftEase=0.0f;
-        float dropEase=0.0f;
         float startupSideEase=1.0f;
         float startupCenterEase=1.0f;
         if(startupAnimation_){
@@ -2636,26 +3125,14 @@ void Launcher::render(float dt){
             }
         }
         if(launchAnimation_){
-            const float animationTime=std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
+            const float animationTime=accessibility_.reducedMotion?0.50f:std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
             const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
             const float reverseEase=reverseProgress*reverseProgress*(3.0f-2.0f*reverseProgress);
             const float centerProgress=launchCenterDuration_>0.0f
                 ?std::min(1.0f,launchAnimationElapsed_/launchCenterDuration_):1.0f;
             const float centerEase=centerProgress*centerProgress*(3.0f-2.0f*centerProgress);
             cx+=static_cast<int>(launchCenteringOffset_*centerEase);
-            const float grow=std::min(1.0f,animationTime/0.38f);
-            const float growEase=1.0f-std::pow(1.0f-grow,3.0f);
-            if(offset==0){
-                // B starts from the full-size stage and only shrinks; it does
-                // not rewind the entrance growth curve.
-                scale=launchReversing_?launchReverseStartScale_+(1.0f-launchReverseStartScale_)*reverseEase:1.0f+0.34f*growEase;
-                // Let the enlarged cartridge register, lift it a touch, then
-                // ease it down offscreen as one continuous movement.
-                const float lift=std::max(0.0f,std::min(1.0f,(animationTime-0.50f)/0.14f));
-                liftEase=lift*lift*(3.0f-2.0f*lift);
-                const float drop=std::max(0.0f,std::min(1.0f,(animationTime-0.64f)/0.36f));
-                dropEase=drop*drop*(3.0f-2.0f*drop);
-            }else{
+            if(offset!=0){
                 const float slide=std::max(0.0f,std::min(1.0f,animationTime/0.48f));
                 const float slideEase=launchReversing_?1.0f-reverseEase:1.0f-std::pow(1.0f-slide,3.0f);
                 cx+=static_cast<int>((offset<0?-1.0f:1.0f)*slideEase*500.0f);
@@ -2663,20 +3140,26 @@ void Launcher::render(float dt){
         }
         const int selectedSystemScale=cartridgeScaleFor(entry.console);
         const float scalePreference=selectedSystemScale==0?0.90f:(selectedSystemScale==2?1.10f:1.0f);
-        const int cw=static_cast<int>((280-95*std::min(1.0f,distance))*scale*scalePreference);
-        const int ch=static_cast<int>((350-120*std::min(1.0f,distance))*scale*scalePreference);
-        if(launchAnimation_ && offset==0){
-            const int liftedCenterY=254-static_cast<int>(30.0f*liftEase);
-            const int fullyOffscreenCenterY=kDesignH+ch/2+30;
-            cy=liftedCenterY+static_cast<int>((fullyOffscreenCenterY-liftedCenterY)*dropEase);
-        }else if(startupAnimation_ && offset==0){
+        const float artworkPreference=(accessibility_.largeArtwork?1.18f:1.0f)*
+            (entry.kind==EntryKind::App && accessibility_.largeControls?1.08f:1.0f);
+        const int cw=static_cast<int>((280-95*std::min(1.0f,distance))*scalePreference*artworkPreference);
+        const int ch=static_cast<int>((350-120*std::min(1.0f,distance))*scalePreference*artworkPreference);
+        if(startupAnimation_ && offset==0){
             const int startY=kDesignH+ch/2+8;
             cy=startY+static_cast<int>((254-startY)*startupCenterEase);
         }
         const SDL_Rect box{cx-cw/2,cy-ch/2,cw,ch};
         if(!(launchAwaitingConfirm_ && previewShowingDetails_ && offset==0)){
-            if(entry.kind==EntryKind::App) draw::appIcon(renderer_,box,entry.artwork,entry.variant,entry.onionMainUi);
+            if(!launchAnimation_ && !startupAnimation_)
+                draw::artworkViewport({12,accessibleLayout?118:100,728,accessibleLayout?298:316});
+            else draw::artworkViewport({0,0,0,0});
+            const Uint8 shade=accessibility_.dimming && offset!=0?static_cast<Uint8>(255-accessibility_.dimming*30):255;
+            if(entry.artwork)SDL_SetTextureAlphaMod(entry.artwork,shade);
+            if(entry.kind==EntryKind::App)draw::appIcon(renderer_,box,entry.artwork,entry.variant,entry.onionMainUi,distance<0.5f);
+            else if(launchAnimation_ && offset==0)drawLaunchingCartridge(entry);
             else draw::cartridge(renderer_,box,entry.system,entry.title,entry.variant,distance<0.5f,entry.artwork);
+            if(entry.artwork)SDL_SetTextureAlphaMod(entry.artwork,255);
+            draw::artworkViewport({0,0,0,0});
         }
     }
     for(size_t i=0;i<entries.size();++i){
@@ -2690,15 +3173,11 @@ void Launcher::render(float dt){
     const int chosen=wrapIndex(static_cast<int>(std::lround(position_)),entryCount);
     std::string title=entries[static_cast<size_t>(chosen)].title;
     const int titleHeight=titleSize_==0?26:(titleSize_==2?34:30);
-    while(!title.empty() && draw::textWidth(title,titleHeight)>kDesignW-40){
-        size_t cut=title.size()-1;
-        while(cut>0 && (static_cast<unsigned char>(title[cut])&0xC0)==0x80) --cut;
-        title.erase(cut);
-    }
+    title=draw::fitText(title,titleHeight,kDesignW-40);
     int bottomTextOffset=0;
     int topTextOffset=0;
     if(launchAnimation_){
-        const float animationTime=std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
+        const float animationTime=accessibility_.reducedMotion?0.50f:std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
         const float topProgress=std::min(1.0f,animationTime/0.40f);
         const float bottomProgress=std::min(1.0f,animationTime/0.40f);
         const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
@@ -2730,11 +3209,11 @@ void Launcher::render(float dt){
     };
     if(!hideGameTitle_)
         draw::text(renderer_,(kDesignW-draw::textWidth(title,titleHeight))/2,428+bottomTextOffset,title,titleHeight,browserTextColor(white));
-    if(showGameCount_){
+    if(showGameCount_ && !accessibility_.hideSecondary){
         const std::string gameCount=std::to_string(chosen+1)+" / "+std::to_string(entryCount);
         draw::text(renderer_,8,8+topTextOffset,gameCount,16,browserTextColor(muted));
     }
-    if(showBatteryLevel_){
+    if(showBatteryLevel_ && !accessibility_.hideSecondary){
         const std::string batteryLabel=batteryPercent_>=0?std::to_string(batteryPercent_)+"%":"--%";
         draw::text(renderer_,kDesignW-8-draw::textWidth(batteryLabel,16),8+topTextOffset,batteryLabel,16,browserTextColor(muted));
     }
@@ -2742,25 +3221,25 @@ void Launcher::render(float dt){
     const Category* selectedCategory=currentCategory();
     const std::string listHeader=selectedCategory?selectedCategory->label:"";
     const int listHeaderHeight=26;
-    draw::text(renderer_,(kDesignW-draw::textWidth(listHeader,listHeaderHeight))/2,48+topTextOffset,listHeader,listHeaderHeight,browserTextColor(white));
+    draw::text(renderer_,(kDesignW-draw::textWidth(listHeader,listHeaderHeight))/2,(accessibleLayout?50:48)+topTextOffset,listHeader,listHeaderHeight,browserTextColor(white));
     const std::string systemHeader=entries[static_cast<size_t>(chosen)].system;
     const int systemHeaderHeight=18;
     // A normal console list already names its system as the main header. Keep
     // the secondary system label for named collections and Favourite, where
     // it adds context instead of repeating the same heading.
-    if(lower(systemHeader)!=lower(listHeader))
-        draw::text(renderer_,(kDesignW-draw::textWidth(systemHeader,systemHeaderHeight))/2,75+topTextOffset,systemHeader,systemHeaderHeight,browserTextColor(muted));
+    if(!accessibility_.hideSecondary && lower(systemHeader)!=lower(listHeader))
+        draw::text(renderer_,(kDesignW-draw::textWidth(systemHeader,systemHeaderHeight))/2,(accessibleLayout?88:75)+topTextOffset,systemHeader,systemHeaderHeight,browserTextColor(muted));
     const size_t upCategoryIndex=adjacentVisibleCategory(-1);
     const size_t downCategoryIndex=adjacentVisibleCategory(1);
     if(upCategoryIndex!=categoryIndex_ || downCategoryIndex!=categoryIndex_){
         const Category& upCategory=categories_[upCategoryIndex];
         const Category& downCategory=categories_[downCategoryIndex];
         const SDL_Color subheader=browserTextColor(SDL_Color{145,148,154,255});
-        const std::string upLabel="UP: "+shortLabel(upCategory.label,32);
+        const std::string upLabel=std::string(accessibility::buttonName(accessibility_.bindings[accessibility::Up]))+": "+shortLabel(upCategory.label,32);
         const int upW=draw::textWidth(upLabel,16);
         arrow(renderer_,kDesignW/2,8+topTextOffset,true,subheader);
         draw::text(renderer_,(kDesignW-upW)/2,22+topTextOffset,upLabel,16,subheader);
-        const std::string downLabel="DOWN: "+shortLabel(downCategory.label,31);
+        const std::string downLabel=std::string(accessibility::buttonName(accessibility_.bindings[accessibility::Down]))+": "+shortLabel(downCategory.label,31);
         const int downW=draw::textWidth(downLabel,16);
         draw::text(renderer_,(kDesignW-downW)/2,477+bottomTextOffset,downLabel,16,subheader);
         arrow(renderer_,kDesignW/2,501+bottomTextOffset,false,subheader);
@@ -2773,10 +3252,17 @@ void Launcher::render(float dt){
             letterJumpAvailable=std::any_of(selectedCategory->entries.begin()+1,selectedCategory->entries.end(),
                 [firstGroup](const Game& game){return titleInitialGroup(game.title)!=firstGroup;});
         }
-        const std::string hints=(letterJumpAvailable?"L/R LETTER   ":"")+std::string("UP/DOWN LIST   LEFT/RIGHT GAME   A OPEN   X REFRESH   SELECT OPTIONS   Y SEARCH");
-        int hintSize=15;
-        while(hintSize>11 && draw::textWidth(hints,hintSize)>kDesignW-12) --hintSize;
-        draw::text(renderer_,(kDesignW-draw::textWidth(hints,hintSize))/2,532+bottomTextOffset,hints,hintSize,browserTextColor(SDL_Color{150,154,162,255}));
+        const std::string hints=controlHints((letterJumpAvailable?"L/R LETTER   ":"")+std::string("UP/DOWN LIST   LEFT/RIGHT GAME   A OPEN   X REFRESH   SELECT OPTIONS   Y SEARCH"));
+        if(accessibility_.textSize==2){
+            const size_t middle=hints.find("   ",hints.size()/2);
+            const std::string first=hints.substr(0,middle),second=middle==std::string::npos?"":hints.substr(middle+3);
+            draw::text(renderer_,(kDesignW-draw::textWidth(first,15))/2,512+bottomTextOffset,first,15,browserTextColor(SDL_Color{150,154,162,255}));
+            draw::text(renderer_,(kDesignW-draw::textWidth(second,15))/2,536+bottomTextOffset,second,15,browserTextColor(SDL_Color{150,154,162,255}));
+        }else{
+            int hintSize=15;
+            while(hintSize>11 && draw::textWidth(hints,hintSize)>kDesignW-12) --hintSize;
+            draw::text(renderer_,(kDesignW-draw::textWidth(hints,hintSize))/2,532+bottomTextOffset,hints,hintSize,browserTextColor(SDL_Color{150,154,162,255}));
+        }
     }
     if(launchAnimation_ && launchAwaitingConfirm_){
         const Game* preview=launchingGame();
@@ -2791,16 +3277,17 @@ void Launcher::render(float dt){
                      std::to_string(preview->artVariants.size())+"   "+artworkLabel;
             }
             if(!launchArtworkLoading_ && previewShowingDetails_) drawPreviewGameDetails(*preview);
-            draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,browserTextColor(muted));
-            const std::string hints="LEFT/RIGHT BROWSE   A LAUNCH   B BACK";
+            if(!accessibility_.hideSecondary || launchArtworkLoading_)
+                draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,browserTextColor(muted));
+            const std::string hints=controlHints("LEFT/RIGHT BROWSE   A LAUNCH   B BACK");
             draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,528,hints,15,browserTextColor(SDL_Color{150,154,162,255}));
         }
     }
 
     if(overlay_!=Overlay::None){
         SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
-        fillRect(renderer_,SDL_Rect{58,85,636,390},{4,7,15,238});
-        outlineRect(renderer_,SDL_Rect{58,85,636,390},{70,82,100,255});
+        fillRect(renderer_,SDL_Rect{58,85,636,overlay_==Overlay::Settings && accessibility_.textSize==2?418:390},{4,7,15,238});
+        outlineRect(renderer_,SDL_Rect{58,85,636,overlay_==Overlay::Settings && accessibility_.textSize==2?418:390},{70,82,100,255});
         const SDL_Color accent{135,205,255,255};
         if(overlay_==Overlay::SelectMenu || overlay_==Overlay::AddToList){
             const bool listScreen=overlay_==Overlay::AddToList;
@@ -2811,24 +3298,24 @@ void Launcher::render(float dt){
                 const std::string none="NO LISTS FOUND";
                 draw::text(renderer_,(kDesignW-draw::textWidth(none,23))/2,245,none,23,muted);
             }else{
-                const int rowHeight=36;
-                const int visibleRows=std::min(8,static_cast<int>(options.size()));
+                const int rowHeight=accessibility_.largeControls?48:std::max(36,draw::textHeight(21)+12);
+                const int visibleRows=std::min(265/rowHeight,static_cast<int>(options.size()));
                 int start=std::max(0,overlaySelection_-visibleRows+1);
                 for(int row=0;row<visibleRows;++row){
                     const int index=start+row;
                     const int y=158+row*rowHeight;
-                    if(index==overlaySelection_) fillRect(renderer_,SDL_Rect{90,y-4,572,32},{32,50,72,255});
-                    const std::string item=(index==overlaySelection_?"> ":"  ")+options[static_cast<size_t>(index)];
+                    if(index==overlaySelection_) fillRect(renderer_,SDL_Rect{90,y-4,572,rowHeight-4},{32,50,72,255});
+                    const std::string item=draw::fitText((index==overlaySelection_?"> ":"  ")+options[static_cast<size_t>(index)],21,528);
                     draw::text(renderer_,112,y,item,21,index==overlaySelection_?accent:white);
                 }
             }
-            const std::string footer="UP/DOWN CHOOSE   A SELECT   B BACK";
+            const std::string footer=controlHints("UP/DOWN CHOOSE   A SELECT   B BACK");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,434,footer,15,muted);
         }else if(overlay_==Overlay::Settings){
             std::vector<std::string> names{
                 "Animation speed","Game title size","Show game counter","Show battery level",
                 "Show control hints","Hide game title","Carousel spacing","Startup animation",
-                "Background","Invert text colour","Reset settings"
+                "Background","Invert text colour","Text background","Restore browser position","Reset settings"
             };
             std::vector<std::string> values{
                 animationSpeed_==0?"SLOW":(animationSpeed_==2?"FAST":"NORMAL"),
@@ -2839,7 +3326,8 @@ void Launcher::render(float dt){
                 startupAnimationEnabled_?"ON":"OFF",
                 backgroundSelection_>=0 && backgroundSelection_<static_cast<int>(backgroundChoices_.size())
                     ?backgroundChoices_[static_cast<size_t>(backgroundSelection_)].label:"NONE",
-                invertTextColour_?"ON":"OFF",
+                invertTextColour_?"ON":"OFF",textBackground_?"ON":"OFF",
+                restoreBrowserPosition_?"ON":"OFF",
                 "RESTORE DEFAULTS"
             };
             // Keep per-system sizing together at the end so that systems
@@ -2852,38 +3340,48 @@ void Launcher::render(float dt){
                 values.push_back(systemHiddenFor(system.id)?"HIDDEN":"SHOWN");
             }
             draw::text(renderer_,(kDesignW-draw::textWidth("CARTOS SETTINGS",24))/2,100,"CARTOS SETTINGS",24,white);
+            const int rowHeight=accessibility_.largeControls?46:34;
+            const int visibleRows=accessibility_.largeControls?6:8;
+            if(settingsSelection_<settingsScrollOffset_)settingsScrollOffset_=settingsSelection_;
+            if(settingsSelection_>=settingsScrollOffset_+visibleRows)settingsScrollOffset_=settingsSelection_-visibleRows+1;
             const int first=settingsScrollOffset_;
-            const int last=std::min(static_cast<int>(names.size()),first+8);
+            const int last=std::min(static_cast<int>(names.size()),first+visibleRows);
             for(int i=first;i<last;++i){
                 const int row=i-first;
-                const int y=139+row*34;
-                if(i==settingsSelection_) fillRect(renderer_,SDL_Rect{82,y-2,588,30},{32,50,72,255});
-                draw::text(renderer_,94,y+4,(i==settingsSelection_?"> ":"  ")+names[static_cast<size_t>(i)],16,i==settingsSelection_?accent:white);
-                const int valueWidth=draw::textWidth(values[static_cast<size_t>(i)],16);
-                draw::text(renderer_,650-valueWidth,y+4,values[static_cast<size_t>(i)],16,i==settingsSelection_?accent:muted);
+                const int y=139+row*rowHeight;
+                if(i==settingsSelection_) fillRect(renderer_,SDL_Rect{82,y-2,588,rowHeight-4},{32,50,72,255});
+                const std::string value=draw::fitText(values[static_cast<size_t>(i)],16,190);
+                const int valueWidth=draw::textWidth(value,16);
+                const std::string name=draw::fitText((i==settingsSelection_?"> ":"  ")+names[static_cast<size_t>(i)],16,530-valueWidth);
+                draw::text(renderer_,94,y+4,name,16,i==settingsSelection_?accent:white);
+                draw::text(renderer_,650-valueWidth,y+4,value,16,i==settingsSelection_?accent:muted);
             }
-            const std::string footer="UP/DOWN SCROLL   LEFT/RIGHT CHANGE   A SELECT   X REFRESH   B CLOSE";
-            draw::text(renderer_,(kDesignW-draw::textWidth(footer,14))/2,435,footer,14,muted);
+            const std::string footer=controlHints("UP/DOWN SCROLL   LEFT/RIGHT CHANGE   A SELECT   X REFRESH   B CLOSE");
+            if(accessibility_.textSize==2){
+                const size_t middle=footer.find("   ",footer.size()/2);
+                const std::string first=footer.substr(0,middle),second=middle==std::string::npos?"":footer.substr(middle+3);
+                draw::text(renderer_,(kDesignW-draw::textWidth(first,14))/2,424,first,14,muted);
+                draw::text(renderer_,(kDesignW-draw::textWidth(second,14))/2,447,second,14,muted);
+            }else draw::text(renderer_,(kDesignW-draw::textWidth(footer,14))/2,435,footer,14,muted);
             const std::string version="CARTOS v" CARTOS_VERSION;
-            draw::text(renderer_,(kDesignW-draw::textWidth(version,13))/2,456,version,13,muted);
+            draw::text(renderer_,(kDesignW-draw::textWidth(version,13))/2,accessibility_.textSize==2?477:456,version,13,muted);
         }else if(overlay_==Overlay::CreateList){
             const std::string heading="CREATE NEW LIST";
             draw::text(renderer_,(kDesignW-draw::textWidth(heading,27))/2,105,heading,27,white);
             const std::string name=newListName_.empty()?"TYPE A NAME":"NAME: "+newListName_;
             draw::text(renderer_,(kDesignW-draw::textWidth(name,23))/2,153,name,23,accent);
-            static const std::string keys[]={"ABCDEFGHIJ","KLMNOPQRST","UVWXYZ0123","456789 -  "};
             for(int row=0;row<4;++row){
                 for(int col=0;col<10;++col){
                     const int index=row*10+col;
-                    const SDL_Rect keyRect{116+col*53,204+row*42,45,32};
+                    const SDL_Rect keyRect{116+col*53,204+row*42,45,accessibility_.largeControls?38:32};
                     if(index==virtualKey_) fillRect(renderer_,keyRect,{41,70,98,255});
                     outlineRect(renderer_,keyRect,index==virtualKey_?accent:SDL_Color{55,63,76,255});
-                    const char letter=keys[row][static_cast<size_t>(col)];
-                    const std::string caption=letter==' '?"·":std::string(1,letter);
+                    const char letter=searchKeyboardCharacter(index);
+                    const std::string caption=letter==' '?"SPC":std::string(1,letter);
                     draw::text(renderer_,keyRect.x+(keyRect.w-draw::textWidth(caption,17))/2,keyRect.y+7,caption,17,index==virtualKey_?accent:white);
                 }
             }
-            const std::string footer="A ADD   X BACKSPACE   START CREATE   B CANCEL";
+            const std::string footer=controlHints("A ADD   X BACKSPACE   START CREATE   B CANCEL");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,425,footer,15,muted);
         }else if(overlay_==Overlay::DeleteConfirm){
             const Category* selected=currentCategory();
@@ -2898,7 +3396,7 @@ void Launcher::render(float dt){
                 if(i==overlaySelection_) fillRect(renderer_,row,{32,50,72,255});
                 draw::text(renderer_,(kDesignW-draw::textWidth(choices[static_cast<size_t>(i)],21))/2,row.y+6,choices[static_cast<size_t>(i)],21,i==overlaySelection_?accent:white);
             }
-            draw::text(renderer_,(kDesignW-draw::textWidth("UP/DOWN CHOOSE   A CONFIRM   B CANCEL",15))/2,420,"UP/DOWN CHOOSE   A CONFIRM   B CANCEL",15,muted);
+            draw::text(renderer_,(kDesignW-draw::textWidth(controlHints("UP/DOWN CHOOSE   A CONFIRM   B CANCEL"),15))/2,420,controlHints("UP/DOWN CHOOSE   A CONFIRM   B CANCEL"),15,muted);
         }else if(overlay_==Overlay::DeleteListConfirm){
             const std::string heading="DELETE LIST?";
             draw::text(renderer_,(kDesignW-draw::textWidth(heading,28))/2,135,heading,28,white);
@@ -2912,7 +3410,7 @@ void Launcher::render(float dt){
                 if(i==overlaySelection_) fillRect(renderer_,row,{32,50,72,255});
                 draw::text(renderer_,(kDesignW-draw::textWidth(choices[static_cast<size_t>(i)],21))/2,row.y+6,choices[static_cast<size_t>(i)],21,i==overlaySelection_?accent:white);
             }
-            const std::string footer="UP/DOWN CHOOSE   A CONFIRM   B CANCEL";
+            const std::string footer=controlHints("UP/DOWN CHOOSE   A CONFIRM   B CANCEL");
             draw::text(renderer_,(kDesignW-draw::textWidth(footer,15))/2,420,footer,15,muted);
         }else if(overlay_==Overlay::GameInfo){
             const Category* selected=currentCategory();
@@ -2920,7 +3418,7 @@ void Launcher::render(float dt){
                 const Game& game=selected->entries[static_cast<size_t>(wrapIndex(static_cast<int>(std::lround(position_)),static_cast<int>(selected->entries.size())))];
                 draw::text(renderer_,(kDesignW-draw::textWidth("GAME DETAILS",27))/2,112,"GAME DETAILS",27,white);
                 draw::text(renderer_,92,156,"TITLE",16,muted);
-                draw::text(renderer_,92,180,shortLabel(game.title,46),20,white);
+                draw::text(renderer_,92,180,draw::fitText(game.title,20,568),20,white);
                 draw::text(renderer_,92,229,"SYSTEM",16,muted);
                 draw::text(renderer_,92,253,game.system,20,white);
                 draw::text(renderer_,92,302,"PLAY TIME",16,muted);
@@ -2939,7 +3437,7 @@ void Launcher::render(float dt){
                 draw::text(renderer_,92,326,playtime,playtimeSize,activityTrackerInstalled?white:muted);
                 draw::text(renderer_,92,376,"ROM FILE",16,muted);
                 draw::text(renderer_,92,400,shortLabel(game.romPath,62),16,white);
-                const std::string footer="B CLOSE";
+                const std::string footer=controlHints("B CLOSE");
                 draw::text(renderer_,(kDesignW-draw::textWidth(footer,16))/2,448,footer,16,muted);
             }
         }
@@ -2950,7 +3448,7 @@ void Launcher::render(float dt){
         fillRect(renderer_,SDL_Rect{(kDesignW-width)/2-8,487,width+16,25},{15,24,36,255});
         draw::text(renderer_,(kDesignW-width)/2,490,statusMessage_,16,{160,216,170,255});
     }
-    SDL_RenderPresent(renderer_);
+    presentFrame();
 }
 
 void Launcher::renderSearch(){
@@ -2958,16 +3456,10 @@ void Launcher::renderSearch(){
     if(launchAnimation_){
         const Game* selected=nullptr;
         if(!selectedInSearch(selected)){
-            SDL_RenderPresent(renderer_);
+            presentFrame();
             return;
         }
-        const float animationTime=std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
-        const float grow=std::min(1.0f,animationTime/0.38f);
-        const float growEase=1.0f-std::pow(1.0f-grow,3.0f);
-        const float lift=std::max(0.0f,std::min(1.0f,(animationTime-0.50f)/0.14f));
-        const float liftEase=lift*lift*(3.0f-2.0f*lift);
-        const float drop=std::max(0.0f,std::min(1.0f,(animationTime-0.64f)/0.36f));
-        const float dropEase=drop*drop*(3.0f-2.0f*drop);
+        const float animationTime=accessibility_.reducedMotion?0.50f:std::max(0.0f,launchAnimationElapsed_-launchCenterDuration_);
         const float textProgress=std::min(1.0f,animationTime/0.40f);
         const float textEase=textProgress*textProgress*(3.0f-2.0f*textProgress);
         const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
@@ -2975,28 +3467,16 @@ void Launcher::renderSearch(){
         const float visibleTextEase=launchReversing_?1.0f-reverseEase:textEase;
         const int topOffset=-190*static_cast<int>(visibleTextEase*1000.0f)/1000;
         const int centerX=kDesignW/2;
-        const int consoleScale=cartridgeScaleFor(selected->console);
-        const float preference=consoleScale==0?0.90f:(consoleScale==2?1.10f:1.0f);
         const int count=static_cast<int>(searchResults_.size());
         for(int offset=-1;offset<=1;++offset){
             if(count==0) break;
+            if(count==1 && offset!=0) continue;
             const int index=wrapIndex(searchResultSelection_+offset,count);
             const auto ref=searchResults_[static_cast<size_t>(index)];
             Game& game=categories_[ref.first].entries[ref.second];
             if(!game.artwork && !game.artPath.empty()) game.artwork=artwork::loadPng(renderer_,game.artPath);
             if(offset==0){
-                const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
-                const float reverseEase=reverseProgress*reverseProgress*(3.0f-2.0f*reverseProgress);
-                const float launchScale=launchReversing_?launchReverseStartScale_+(1.0f-launchReverseStartScale_)*reverseEase:1.0f+0.34f*growEase;
-                const float scale=(280.0f/220.0f)*launchScale*preference;
-                const int width=static_cast<int>(220.0f*scale);
-                const int height=static_cast<int>(275.0f*scale);
-                const int liftedCenterY=274-static_cast<int>(30.0f*liftEase);
-                const int offscreenCenterY=kDesignH+height/2+30;
-                const int centerY=liftedCenterY+static_cast<int>((offscreenCenterY-liftedCenterY)*dropEase);
-                const SDL_Rect box{centerX-width/2,centerY-height/2,width,height};
-                if(!(launchAwaitingConfirm_ && previewShowingDetails_))
-                    draw::cartridge(renderer_,box,game.system,game.title,game.variant,true,game.artwork);
+                if(!(launchAwaitingConfirm_ && previewShowingDetails_))drawLaunchingCartridge(game);
             }else{
                 const float slide=std::max(0.0f,std::min(1.0f,animationTime/0.48f));
                 const float reverseProgress=std::min(1.0f,launchReverseElapsed_/kLaunchReverseDuration);
@@ -3027,11 +3507,12 @@ void Launcher::renderSearch(){
                 info="IMAGE "+std::to_string(selected->artSelection+1)+" / "+
                      std::to_string(selected->artVariants.size())+"   "+artworkLabel;
             }
-            draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,muted);
-            const std::string hints="LEFT/RIGHT BROWSE   A LAUNCH   B BACK";
+            if(!accessibility_.hideSecondary || launchArtworkLoading_)
+                draw::text(renderer_,(kDesignW-draw::textWidth(info,15))/2,469,info,15,muted);
+            const std::string hints=controlHints("LEFT/RIGHT BROWSE   A LAUNCH   B BACK");
             draw::text(renderer_,(kDesignW-draw::textWidth(hints,15))/2,528,hints,15,muted);
         }
-        SDL_RenderPresent(renderer_);
+        presentFrame();
         return;
     }
     const std::string heading="SEARCH GAMES";
@@ -3044,49 +3525,56 @@ void Launcher::renderSearch(){
         const int count=static_cast<int>(searchResults_.size());
         for(int offset=-1;offset<=1;++offset){
             if(count==0) break;
+            if(count==1 && offset!=0) continue;
             const int index=wrapIndex(searchResultSelection_+offset,count);
             const auto neighborRef=searchResults_[static_cast<size_t>(index)];
             Game& game=categories_[neighborRef.first].entries[neighborRef.second];
             if(!game.artwork && !game.artPath.empty()) game.artwork=artwork::loadPng(renderer_,game.artPath);
-            const int width=offset==0?220:96;
-            const int height=offset==0?275:120;
+            const float factor=accessibility_.largeArtwork?1.18f:1.0f;
+            const int width=static_cast<int>((offset==0?220:96)*factor);
+            const int height=static_cast<int>((offset==0?275:120)*factor);
             const int x=kDesignW/2+offset*(offset==0?0:150)-width/2;
-            const int carouselCenterY=searchResultsFocused_?238:274;
+            const int carouselCenterY=searchResultsFocused_?238:226;
             const SDL_Rect box{x,carouselCenterY-height/2,width,height};
             // Search already draws the ROM title beneath the carousel. Keep
             // fallback shells free of a second, overlapping copy of the name.
+            draw::artworkViewport(searchResultsFocused_?SDL_Rect{20,126,712,250}:SDL_Rect{20,126,712,180});
             draw::cartridge(renderer_,box,game.system,"",game.variant,offset==0,game.artwork);
+            draw::artworkViewport({0,0,0,0});
         }
         const std::string title=shortLabel(selected->title,52);
-        const int titleY=searchResultsFocused_?397:329;
+        const int titleY=searchResultsFocused_?397:316;
         const int subtitleY=searchResultsFocused_?428:360;
         draw::text(renderer_,(kDesignW-draw::textWidth(title,22))/2,titleY,title,22,white);
         const std::string system=selected->system+"   "+std::to_string(searchResultSelection_+1)+" / "+std::to_string(searchResults_.size());
-        draw::text(renderer_,(kDesignW-draw::textWidth(system,16))/2,subtitleY,system,16,muted);
+        if(!accessibility_.hideSecondary)draw::text(renderer_,(kDesignW-draw::textWidth(system,16))/2,subtitleY,system,16,muted);
     }else{
         const std::string none=searchQuery_.empty()?"START TYPING TO FIND A GAME":"NO MATCHES";
         draw::text(renderer_,(kDesignW-draw::textWidth(none,20))/2,245,none,20,muted);
     }
     if(!searchResultsFocused_){
+        fillRect(renderer_,{101,388,560,130},{0,0,0,255});
+        draw::suppressTextBackground(true);
         for(int row=0;row<4;++row){
             for(int col=0;col<10;++col){
                 const int index=row*10+col;
-                const SDL_Rect keyRect{111+col*55,398+row*28,47,23};
+                const SDL_Rect keyRect{111+col*55,398+row*(accessibility_.largeControls?29:28),47,accessibility_.largeControls?26:23};
                 if(index==virtualKey_)fillRect(renderer_,keyRect,{39,64,90,255});
                 outlineRect(renderer_,keyRect,index==virtualKey_?SDL_Color{145,205,255,255}:SDL_Color{54,62,75,255});
                 const char value=searchKeyboardCharacter(index);
-                const std::string label=value==' '?"SPACE":std::string(1,value);
+                const std::string label=draw::fitText(value==' '?(accessibility_.textSize==2?"SPC":"SPACE"):std::string(1,value),value==' '?12:15,43);
                 const int labelSize=value==' '?12:15;
                 draw::text(renderer_,keyRect.x+(keyRect.w-draw::textWidth(label,labelSize))/2,keyRect.y+4,label,labelSize,index==virtualKey_?SDL_Color{145,205,255,255}:white);
             }
         }
-        const std::string footer="A TYPE   B BACKSPACE   X REFRESH   START RESULTS";
+        const std::string footer=controlHints("A TYPE   B BACKSPACE   X REFRESH   START RESULTS   Y EXIT");
         draw::text(renderer_,(kDesignW-draw::textWidth(footer,14))/2,520,footer,14,muted);
+        draw::suppressTextBackground(false);
     }else{
-        const std::string footer="LEFT/RIGHT BROWSE   A OPEN   Y TOGGLE RESULTS   B KEYBOARD";
+        const std::string footer=controlHints("LEFT/RIGHT BROWSE   A OPEN   B KEYBOARD   Y EXIT");
         draw::text(renderer_,(kDesignW-draw::textWidth(footer,14))/2,520,footer,14,muted);
     }
-    SDL_RenderPresent(renderer_);
+    presentFrame();
 }
 
 int Launcher::run(){
@@ -3126,7 +3614,8 @@ int Launcher::run(){
                     resetPreviewArtwork();
                 }
             }else{
-                launchAnimationElapsed_+=dt*speed;
+                if(accessibility_.reducedMotion && launchStepTwoConfirmed_)launchAnimationElapsed_=kLaunchAnimationDuration;
+                else launchAnimationElapsed_+=dt*speed;
             }
             const float stepOneDuration=launchCenterDuration_+0.50f;
             if(launchAnimation_ && !launchReversing_ && !launchStepTwoConfirmed_ && launchAnimationElapsed_>=stepOneDuration){

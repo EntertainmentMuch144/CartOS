@@ -28,7 +28,7 @@ if [ ! -f "$CARTOS_NEON_HEADER" ]; then
   exit 2
 fi
 cp "$CARTOS_NEON_HEADER" "$SOURCE/include/neon.h"
-(cd "$SOURCE" && ./build-scripts/mk_miyoo.sh --docker --disable-gles --skip-neon)
+(cd "$SOURCE" && ./build-scripts/mk_miyoo.sh --docker --disable-gles --skip-neon --config-arg --enable-oss)
 
 PREFIX="$ROOT/build/miyoo-sdl2-prefix"
 LIBDIR="$PREFIX/lib"

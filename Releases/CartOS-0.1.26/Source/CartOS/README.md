@@ -14,7 +14,6 @@ CartOS is a cartridge-style game browser for OnionOS handhelds. Version 0.1.26 h
 
 The first preview for a system builds a missing or corrupt index. Adding or
 removing artwork requires X refresh. Index build/load timings are printed to standard output.
-See `TESTING.md` for validation notes and optional regression checks.
 
 ## Features
 

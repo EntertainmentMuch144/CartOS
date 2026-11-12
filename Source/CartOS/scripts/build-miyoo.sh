@@ -40,7 +40,8 @@ cmake -S "$ROOT" -B "$ROOT/build/miyoo" \
   -DCMAKE_INSTALL_PREFIX=/
 cmake --build "$ROOT/build/miyoo" --parallel
 DESTDIR="$APP" cmake --build "$ROOT/build/miyoo" --target install
-mkdir -p "$APP/res" "$APP/licenses"
+mkdir -p "$APP/res/icon" "$APP/licenses"
+cp "$ROOT/assets/accessibility.png" "$APP/res/icon/accessibility.png"
 cp "$ROOT/assets/font_atlas.png" "$APP/res/font_atlas.png"
 cp "$ROOT/assets/onionos_logo.png" "$APP/res/onionos_logo.png"
 cp "$ROOT/assets/fonts/DejaVu-LICENSE.txt" "$APP/licenses/DejaVu-LICENSE.txt"

@@ -128,8 +128,8 @@ node. It does not create a device node or alter OnionOS.
 
 Actual vibration timing,
 audio output and interaction with keymon still require the Miyoo Mini V4
-checks in TESTING.md. Host tests verify capability gating and failure paths;
-they cannot prove physical actuator or audio behaviour on another device.
+Host checks verify capability gating and failure paths; they cannot prove
+physical actuator or audio behaviour on another device.
 
 ## Reset and configuration
 

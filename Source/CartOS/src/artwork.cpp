@@ -55,7 +55,8 @@ SDL_Texture* loadPng(SDL_Renderer* renderer, const std::string& path, int maxTex
         32, static_cast<int>(image.width * 4), SDL_PIXELFORMAT_RGBA32);
     SDL_Surface* uploadSurface=surface;
     SDL_Surface* reducedSurface=nullptr;
-    if(surface && maxTextureSide>0 && (image.width>maxTextureSide || image.height>maxTextureSide)){
+    if(surface && maxTextureSide>0 &&
+       (image.width>static_cast<png_uint_32>(maxTextureSide) || image.height>static_cast<png_uint_32>(maxTextureSide))){
         uploadSurface=nullptr;
         const double scale=std::min(static_cast<double>(maxTextureSide)/image.width,
                                     static_cast<double>(maxTextureSide)/image.height);

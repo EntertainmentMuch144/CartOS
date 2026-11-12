@@ -9,6 +9,21 @@
 
 namespace {
 SDL_Texture* fontAtlas=nullptr;
+int accessibleTextSize=1;
+bool highContrast=false,enhancedSelection=false;
+bool textBackgroundEnabled=false,textBackgroundSuppressed=false,textBackgroundLight=false;
+SDL_Rect artworkLimits{0,0,0,0};
+
+SDL_Rect constrainArtwork(SDL_Rect image,SDL_Rect artworkLimits){
+    if(artworkLimits.w<=0 || artworkLimits.h<=0)return image;
+    const float scale=std::min(1.0f,std::min(static_cast<float>(artworkLimits.w)/std::max(1,image.w),
+        static_cast<float>(artworkLimits.h)/std::max(1,image.h)));
+    const int width=std::max(1,static_cast<int>(image.w*scale)),height=std::max(1,static_cast<int>(image.h*scale));
+    image.x+=(image.w-width)/2;image.y+=(image.h-height)/2;image.w=width;image.h=height;
+    image.x=std::max(artworkLimits.x,std::min(artworkLimits.x+artworkLimits.w-image.w,image.x));
+    image.y=std::max(artworkLimits.y,std::min(artworkLimits.y+artworkLimits.h-image.h,image.y));
+    return image;
+}
 
 uint32_t nextCodepoint(const std::string& text,size_t& pos){
     const unsigned char first=static_cast<unsigned char>(text[pos++]);
@@ -94,6 +109,43 @@ SDL_Rect fitTexture(SDL_Texture* texture,SDL_Rect bounds){
 }
 
 namespace draw {
+void accessibilityStyle(int textSize,bool contrast,bool indicator){
+    accessibleTextSize=std::max(0,std::min(2,textSize));highContrast=contrast;enhancedSelection=indicator;
+}
+void textBackground(bool enabled,bool light){textBackgroundEnabled=enabled;textBackgroundLight=light;}
+void suppressTextBackground(bool suppressed){textBackgroundSuppressed=suppressed;}
+int textHeight(int baseHeight){
+    return std::max(10,static_cast<int>(std::lround(baseHeight*(accessibleTextSize==0?0.90:accessibleTextSize==2?1.25:1.0))));
+}
+SDL_Color foreground(SDL_Color color){
+    if(!highContrast)return color;
+    const bool accent=color.b>color.r+20 || color.g>color.r+25;
+    return accent?SDL_Color{255,230,70,color.a}:SDL_Color{255,255,255,color.a};
+}
+SDL_Color panelColor(SDL_Color color){
+    if(!highContrast)return color;
+    const bool highlighted=color.b>color.r+15 && color.g>color.r+8;
+    return highlighted?SDL_Color{28,28,28,255}:SDL_Color{0,0,0,255};
+}
+void artworkViewport(SDL_Rect viewport){artworkLimits=viewport;}
+SDL_Rect artworkRect(SDL_Texture* artwork,SDL_Rect box,SDL_Rect viewport){
+    return constrainArtwork(artwork?fitTexture(artwork,box):box,viewport);
+}
+void selection(SDL_Renderer* renderer,SDL_Rect box){
+    if(!highContrast && !enhancedSelection)return;
+    const SDL_Color color=highContrast?SDL_Color{255,230,70,255}:SDL_Color{255,255,255,255};
+    setColor(renderer,color);
+    const int thickness=enhancedSelection?4:2;
+    // A dark outer keyline keeps the light indicator visible on bright BGs.
+    setColor(renderer,{0,0,0,255});
+    const SDL_Rect outer{box.x-thickness,box.y-thickness,box.w+thickness*2,box.h+thickness*2};
+    SDL_RenderDrawRect(renderer,&outer);
+    setColor(renderer,color);
+    for(int i=0;i<thickness;++i){
+        SDL_Rect outline{box.x-i,box.y-i,box.w+i*2,box.h+i*2};SDL_RenderDrawRect(renderer,&outline);
+    }
+}
+std::string fitText(const std::string& value,int height,int width){return fitLabel(value,height,std::max(1,width));}
 bool initializeFont(SDL_Renderer* renderer,const std::string& path){
     shutdownFont();
     // Glyph coordinates refer to the full atlas dimensions in generated_font.hpp.
@@ -161,24 +213,41 @@ void background(SDL_Renderer* renderer,SDL_Texture* artwork,int width,int height
 
 int textWidth(const std::string& value,int pixelHeight){
     if(pixelHeight<=0) return 0;
+    pixelHeight=textHeight(pixelHeight);
     const double scale=static_cast<double>(pixelHeight)/fontdata::kBaseSize;
-    int units=0;
+    int width=0;
     for(size_t pos=0;pos<value.size();){
         const uint32_t codepoint=nextCodepoint(value,pos);
-        units+=glyphFor(codepoint).advance;
+        width+=static_cast<int>(std::lround(glyphFor(codepoint).advance*scale));
     }
-    return static_cast<int>(std::ceil(units*scale));
+    return width;
 }
 
 void text(SDL_Renderer* renderer,int x,int y,const std::string& value,int pixelHeight,SDL_Color color){
     if(!fontAtlas || pixelHeight<=0) return;
+    std::string fitted=value;
+    const int available=std::max(1,752-std::max(8,x)-8);
+    if(textWidth(fitted,pixelHeight)>available){
+        if(x<8)x=8;
+        fitted=fitLabel(fitted,pixelHeight,available);
+    }
+    const int textWidthPixels=textWidth(fitted,pixelHeight);
+    pixelHeight=textHeight(pixelHeight);
+    if(textBackgroundEnabled && !textBackgroundSuppressed && textWidthPixels>0){
+        SDL_BlendMode previousBlend=SDL_BLENDMODE_NONE;
+        SDL_GetRenderDrawBlendMode(renderer,&previousBlend);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+        roundedRect(renderer,SDL_Rect{x-5,y-3,textWidthPixels+10,pixelHeight+7},4,textBackgroundLight?SDL_Color{255,255,255,230}:SDL_Color{0,0,0,230});
+        SDL_SetRenderDrawBlendMode(renderer,previousBlend);
+    }
+    color=foreground(color);
     const double scale=static_cast<double>(pixelHeight)/fontdata::kBaseSize;
     SDL_SetTextureColorMod(fontAtlas,color.r,color.g,color.b);
     SDL_SetTextureAlphaMod(fontAtlas,color.a);
     int pen=x;
     const int baseline=y+static_cast<int>(std::lround(21.0*scale));
-    for(size_t pos=0;pos<value.size();){
-        const fontdata::Glyph& glyph=glyphFor(nextCodepoint(value,pos));
+    for(size_t pos=0;pos<fitted.size();){
+        const fontdata::Glyph& glyph=glyphFor(nextCodepoint(fitted,pos));
         if(glyph.w>0 && glyph.h>0){
             SDL_Rect source{glyph.x,glyph.y,glyph.w,glyph.h};
             SDL_Rect destination{
@@ -197,10 +266,12 @@ void text(SDL_Renderer* renderer,int x,int y,const std::string& value,int pixelH
 
 void cartridge(SDL_Renderer* renderer,SDL_Rect box,const std::string& system,const std::string& title,int variant,bool selected,SDL_Texture* artwork){
     if(artwork){
-        SDL_Rect image=fitTexture(artwork,box);
+        SDL_Rect image=constrainArtwork(fitTexture(artwork,box),artworkLimits);
         SDL_RenderCopy(renderer,artwork,nullptr,&image);
+        if(selected)selection(renderer,image);
         return;
     }
+    box=constrainArtwork(box,artworkLimits);
     const SDL_Color shells[]={{53,57,65,255},{45,54,58,255},{61,51,56,255},{52,54,47,255}};
     const SDL_Color accents[]={{232,179,49,255},{72,160,193,255},{196,85,87,255},{120,177,111,255}};
     roundedRect(renderer,box,std::max(8,box.w/12),{17,18,20,255});
@@ -212,16 +283,20 @@ void cartridge(SDL_Renderer* renderer,SDL_Rect box,const std::string& system,con
     const int maxLabelWidth=std::max(1,box.w-18);
     const std::string faceTitle=fitLabel(title,titleSize,maxLabelWidth);
     text(renderer,box.x+(box.w-draw::textWidth(faceTitle,titleSize))/2,box.y+box.h*2/3,faceTitle,titleSize,{245,245,245,255});
+    if(selected)selection(renderer,box);
     (void)system;
     (void)selected;
 }
 
-void appIcon(SDL_Renderer* renderer,SDL_Rect box,SDL_Texture* artwork,int variant,bool onionMainUi){
-    const int size=std::min(box.w,box.h);
-    SDL_Rect panel{box.x+(box.w-size)/2,box.y+(box.h-size)/2,size,size};
-    roundedRect(renderer,panel,std::max(14,size/9),{56,61,70,255});
+void appIcon(SDL_Renderer* renderer,SDL_Rect box,SDL_Texture* artwork,int variant,bool onionMainUi,bool selected){
+    const int requestedSize=std::min(box.w,box.h);
+    // App tiles are square. Fit that square rather than the carousel's taller
+    // cartridge box, otherwise increasing tile size would be cancelled out.
+    SDL_Rect panel=constrainArtwork({box.x+(box.w-requestedSize)/2,box.y+(box.h-requestedSize)/2,requestedSize,requestedSize},artworkLimits);
+    const int size=panel.w;
+    roundedRect(renderer,panel,std::max(14,size/9),highContrast?SDL_Color{255,255,255,255}:SDL_Color{56,61,70,255});
     SDL_Rect inset{panel.x+4,panel.y+4,panel.w-8,panel.h-8};
-    roundedRect(renderer,inset,std::max(10,size/11),{36,39,48,255});
+    roundedRect(renderer,inset,std::max(10,size/11),highContrast?SDL_Color{0,0,0,255}:SDL_Color{36,39,48,255});
     const int iconSize=onionMainUi?size*3/4:size*5/9;
     SDL_Rect iconArea{panel.x+(size-iconSize)/2,panel.y+(size-iconSize)/2,iconSize,iconSize};
     if(artwork){
@@ -231,5 +306,6 @@ void appIcon(SDL_Renderer* renderer,SDL_Rect box,SDL_Texture* artwork,int varian
         const SDL_Color accents[]={{232,179,49,255},{72,160,193,255},{196,85,87,255},{120,177,111,255}};
         roundedRect(renderer,iconArea,std::max(8,size/12),accents[variant%4]);
     }
+    if(selected)selection(renderer,panel);
 }
 }

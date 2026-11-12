@@ -109,7 +109,7 @@ def main() -> None:
                              compresslevel=8) as archive:
             package_root = package_name
             add_tree(archive, app, f"{package_root}/App/CartOS")
-            for filename in ("INSTALL.txt", "README.md", "TESTING.md", "ACCESSIBILITY.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "CHANGELOG.md"):
+            for filename in ("INSTALL.txt", "README.md", "ACCESSIBILITY.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "CHANGELOG.md"):
                 archive.write(CHANGELOG if filename == "CHANGELOG.md" else ROOT / filename,
                               f"{package_root}/{filename}")
             archive.write(startup_hook, f"{package_root}/Startup/CartOS.sh")

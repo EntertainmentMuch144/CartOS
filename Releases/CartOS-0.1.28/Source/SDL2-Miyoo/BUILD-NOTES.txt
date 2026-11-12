@@ -1,0 +1,28 @@
+Matching SDL2 source for the CartOS 0.1.28 release audio configuration.
+
+Source revision: 178fc0fcfbdc8a92fbac16171fe945eb66d8f7d5
+Original upstream: https://github.com/XK9274/sdl2_miyoo
+The corresponding source is included here; no external checkout is required.
+
+The bundled runtime enables OSS audio as well as the Miyoo video/input backend.
+Build flags: --disable-gles --skip-neon --config-arg --enable-oss
+CartOS uses the OSS driver (SDL_AUDIODRIVER=dsp) with OnionOS's preloaded
+libpadsp.so and existing audio server. No OnionOS binary is shipped or modified.
+
+The archive includes the project's generated SDL_revision.h and CartOS's own
+include/neon.h ABI declarations. The matching MIT compatibility implementation
+and license are in Source/CartOS/tools/neon_compat.c and Source/CartOS/LICENSE.
+Build libneonarmmiyoo.so from that code before linking SDL; the unrelated
+upstream NEON helper is not needed or included. The build stages its vendor
+GFX headers from patches/ as in the original Miyoo build script.
+
+The Union container can use the pre-generated configure script in this archive
+with AUTOCONF=true when autoconf is unavailable. With autoconf installed, use
+the normal autogen step. The configure flags above reproduce OSS support;
+renderer and input source files are unchanged from the stated revision.
+CartOS-virtual-dsp.patch is applied: on Miyoo, probe /dev/dsp by opening it
+even when no character-device node exists, since libpadsp supplies a virtual
+endpoint. Other paths and capture devices retain the standard SDL checks.
+The patched source is already included in the archive.
+
+See the archive's LICENSE and LICENSE.txt and the app's licenses/SDL2 folder.
